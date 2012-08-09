@@ -115,7 +115,7 @@ static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
 static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
 
 /* test */
-static void PosDetApp_SetGPSConfigTest(PosDetApp *pMe);
+static void PosDetApp_CnfgTrackNetwork(PosDetApp *pMe);
 /* test */
 static void PosDetApp_ShowGPSInfo(PosDetApp *pMe);
 static void PosDetApp_CBGetGPSInfo_0(void *pd);
@@ -285,7 +285,7 @@ PosDetApp_Start(PosDetApp *pMe)
     /* TODO: We can choose MultipleRequests or SingleRequest according to the
        settings in the configuration file. */
     if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
-        PosDetApp_SetGPSConfigTest(pMe);
+        PosDetApp_CnfgTrackNetwork(pMe);
         CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
         return PosDetApp_MultipleRequests(pMe);
     }
@@ -571,7 +571,7 @@ PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
 }
 
 static void
-PosDetApp_SetGPSConfigTest(PosDetApp *pMe)
+PosDetApp_CnfgTrackNetwork(PosDetApp *pMe)
 {
     int err;
     MEMSET(&pMe->gpsConfig, 0, sizeof(AEEGPSConfig));

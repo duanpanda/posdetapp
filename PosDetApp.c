@@ -317,7 +317,7 @@ static void
 PosDetApp_Stop(PosDetApp *pMe)
 {
     ISHELL_CancelTimer(pMe->applet.m_pIShell, PosDetApp_MultipleRequests, pMe);
-    CALLBACK_Cancel(pMe->cbGetGPSInfo);
+    CALLBACK_Cancel(&pMe->cbGetGPSInfo);
 }
 
 static uint32
@@ -598,8 +598,8 @@ PosDetApp_SetGPSConfigTest(PosDetApp *pMe)
         DBGPRINTF("PosDetApp: Failed to retrieve config. err = %d", err);
     }
 
-    pMe->gpsConfig.mode = AEEGPS_MODE_TRACK_LOCAL;
-    pMe->gpsConfig.nFixes = 10;
+    pMe->gpsConfig.mode = AEEGPS_MODE_TRACK_NETWORK;
+    pMe->gpsConfig.nFixes = 0;
     pMe->gpsConfig.nInterval = GPSCBACK_INTERVAL;
     pMe->gpsConfig.optim = AEEGPS_OPT_SPEED;
     pMe->gpsConfig.qos = pMe->gpsSettings.qos;
@@ -633,8 +633,12 @@ PosDetApp_CBGetGPSInfo_1(void *pd)
     pMe->gpsRespCnt++;
 
     pMe->bWaitingForResp = FALSE;
-    if (pMe->gpsInfo.status == AEEGPS_ERR_NO_ERR) {
+    if (pMe->gpsInfo.status == AEEGPS_ERR_NO_ERR
+        || (pMe->gpsInfo.status == AEEGPS_ERR_INFO_UNAVAIL
+            && pMe->gpsInfo.fValid)) {
         PosDetApp_ShowGPSInfo(pMe);
+        ISHELL_SetTimer(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
+                        PosDetApp_MultipleRequests, pMe);
     }
     else {
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
@@ -674,9 +678,6 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
     pMe->maxGPSReqCnt = 10;      // pMe->gpsReqCnt = 0 initially
 
     if (pMe->bWaitingForResp) {
-        // delay and retry
-        ISHELL_SetTimer(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
-                        PosDetApp_MultipleRequests, pMe);
         return TRUE;
     }
 
@@ -705,8 +706,6 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
         PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
                          IDF_ALIGN_LEFT | IDF_RECT_FILL,
                          "req: %d", pMe->gpsReqCnt);
-        ISHELL_SetTimer(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
-                        PosDetApp_MultipleRequests, pMe);
     }
     return TRUE;
 }
@@ -731,6 +730,7 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
     AECHAR wcText[MAXTEXTLEN];
     char szStr[MAXTEXTLEN];
 
+    ZEROAT(&posInfo);
     posInfo.dwSize = sizeof(AEEPositionInfoEx);
     IPOSDET_ExtractPositionInfo(pMe->piPosDet, &pMe->gpsInfo, &posInfo);
 

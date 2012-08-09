@@ -16,7 +16,7 @@
 #define SPD_CONFIG_SVR_PORT_STRING  "GPS_SERVER_PORT = "
 #define SPD_QOS_DEFAULT       127
 
-#define GPSCBACK_DOGTIMER 30000 // milliseconds
-#define GPSCBACK_INTERVAL 5     // seconds
+//#define GPSCBACK_DOGTIMER 30000 // milliseconds
+#define GPSCBACK_INTERVAL 0     // seconds
 
 #endif /* #ifndef CPOSDETAPP_H */

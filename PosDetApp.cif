@@ -1,0 +1,64 @@
+include "CPosDetApp.h"
+
+AEEPRIVID_PLPosLocation = 0x0080 --Declare
+AEEPRIVID_PLFile = 0x0001 --Declare
+AEEPRIVID_PLNetwork = 0x0002 --Declare
+
+-- Applet Name
+ModRsc {
+   id    = 20, -- Applet base resource id
+   type  = 1,  --RESTYPE_ENCSTRING (see AEEResType.h)
+   data   = UTF16_EncString("PosDetApp")}
+
+-- Applet Icon Small
+ModRsc {
+   id    = 23, -- IDR_ICON_OFFSET,
+   type  = 6,  --RESTYPE_MIMETYPED (see AEEResType.h)
+   data  = ImageRscData("image/png", BytesOfFile("PosDetApp_16x16.png"))
+}
+
+-- Applet Icon Medium
+ModRsc {
+   id    = 21, -- IDR_ICON_OFFSET,
+   type  = 6,  --RESTYPE_MIMETYPED (see AEEResType.h)
+   data  = ImageRscData("image/png", BytesOfFile("PosDetApp_26x26.png"))
+}
+
+-- Applet Icon Large
+ModRsc {
+   id    = 22, -- IDR_ICON_OFFSET,
+   type  = 6,  --RESTYPE_MIMETYPED (see AEEResType.h)
+   data  = ImageRscData("image/png", BytesOfFile("PosDetApp_40x40.png"))
+}
+
+-- Applet Icon X-Large
+ModRsc {
+   id    = 39, -- IDR_ICON_OFFSET,
+   type  = 6,  --RESTYPE_MIMETYPED (see AEEResType.h)
+   data  = ImageRscData("image/png", BytesOfFile("PosDetApp_50x50.png"))
+}
+
+Applet {
+   appletid       =  AEECLSID_CPOSDETAPP,
+   resbaseid      =  20, -- Applet base resource id
+   applethostid   =  0,
+   type           =  0,
+flags =8,
+privs = {
+AEEPRIVID_PLPosLocation,AEEPRIVID_PLFile,AEEPRIVID_PLNetwork
+},
+}
+
+ModRsc {
+    name  ="IDS_STRING_6", 
+    id    = 6,
+    type  = 1,
+    data  =UTF16_EncString("Ryan Duan"),
+}
+
+ModRsc {
+    name  ="IDS_STRING_8", 
+    id    = 8,
+    type  = 1,
+    data  =UTF16_EncString("0.1"),
+}

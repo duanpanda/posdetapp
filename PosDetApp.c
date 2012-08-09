@@ -84,6 +84,7 @@ typedef struct _PosDetApp {
 
     IPosDet  *piPosDet;
     AEECallback cbGetGPSInfo;
+    AEECallback cbReqInterval;
     AEEGPSConfig gpsConfig;
     AEEGPSInfo gpsInfo;
 
@@ -195,7 +196,7 @@ PosDetApp_FreeAppData(PosDetApp * pMe)
         IPOSDET_Release(pMe->piPosDet);
         pMe->piPosDet = NULL;
     }
-        
+
 }
 
 static boolean
@@ -285,6 +286,7 @@ PosDetApp_Start(PosDetApp *pMe)
        settings in the configuration file. */
     if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
         PosDetApp_SetGPSConfigTest(pMe);
+        CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
         return PosDetApp_MultipleRequests(pMe);
     }
     else if (pMe->gpsSettings.reqType == SINGLE_REQUEST) {
@@ -298,7 +300,7 @@ PosDetApp_Start(PosDetApp *pMe)
 static void
 PosDetApp_Stop(PosDetApp *pMe)
 {
-    ISHELL_CancelTimer(pMe->applet.m_pIShell, PosDetApp_MultipleRequests, pMe);
+    CALLBACK_Cancel(&pMe->cbReqInterval);
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
 }
 
@@ -619,8 +621,8 @@ PosDetApp_CBGetGPSInfo_1(void *pd)
         || (pMe->gpsInfo.status == AEEGPS_ERR_INFO_UNAVAIL
             && pMe->gpsInfo.fValid)) {
         PosDetApp_ShowGPSInfo(pMe);
-        ISHELL_SetTimer(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
-                        PosDetApp_MultipleRequests, pMe);
+        ISHELL_SetTimerEx(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
+                          &pMe->cbReqInterval);
     }
     else {
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
@@ -633,6 +635,7 @@ PosDetApp_CBGetGPSInfo_1(void *pd)
 static boolean
 PosDetApp_SingleRequest(PosDetApp *pMe)
 {
+    CALLBACK_Cancel(&pMe->cbGetGPSInfo);
     CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_0, (void*)pMe);
     if (IPOSDET_GetGPSInfo(pMe->piPosDet,
                            AEEGPS_GETINFO_LOCATION | AEEGPS_GETINFO_ALTITUDE

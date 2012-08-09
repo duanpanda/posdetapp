@@ -78,22 +78,6 @@ typedef struct _TrackState{
     /**************************/
 } TrackState;
 
-typedef struct _GetGPSInfo {
-    PositionData theInfo;
-    IPosDet      *pPosDet;
-    AEECallback  cbPosDet;
-    AEECallback  cbProgressTimer;
-    uint32       dwFixNumber;
-    uint32       dwFixDuration;
-    uint32       dwFail;
-    uint32       dwTimeout;
-    uint16       wProgress;
-    boolean      bPaused;
-    uint16       wMainMenuEntry;
-    boolean      bAbort;
-    TrackState   *pts;
-} GetGPSInfo;
-
 typedef struct _PosDetApp {
     AEEApplet applet;     // First element of this structure must be AEEApplet.
     AEEDeviceInfo deviceInfo;   // Copy of device info for easy access.
@@ -104,8 +88,7 @@ typedef struct _PosDetApp {
     AEEGPSInfo gpsInfo;
 
     int gpsRespCnt;
-    int gpsReqCnt; // to track how many gps requests are sent
-    int maxGPSReqCnt; // max number of requests to be sent
+    int gpsReqCnt; // to track how many GPS requests are sent
     boolean bWaitingForResp;
 
     CSettings gpsSettings;
@@ -138,7 +121,6 @@ static void PosDetApp_CBGetGPSInfo_0(void *pd);
 static void PosDetApp_CBGetGPSInfo_1(void *pd);
 static boolean PosDetApp_SingleRequest(PosDetApp *pMe);
 static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
-static void PosDetApp_GPSInfoWatchDog(void *pd);
 
 /*-----------------------------------------------------------------------------
   Function Definitions
@@ -621,7 +603,7 @@ PosDetApp_CBGetGPSInfo_0(void *pd)
     }
     else {
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
-                         "PosDetApp: error: GetGPSInfo status = %u",
+                         "error: GetGPSInfo status = %u",
                          pMe->gpsInfo.status);
     }
 }
@@ -642,17 +624,10 @@ PosDetApp_CBGetGPSInfo_1(void *pd)
     }
     else {
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
-                         "PosDetApp: error: GetGPSInfo status = %u",
+                         "error: GetGPSInfo status = %u",
                          pMe->gpsInfo.status);
         return;
     }
-
-    // start WATCH DOG Timer to wait for more responses
-    //if (pMe->gpsRespCnt < pMe->gpsReqCnt) { 
-    //    // Start a WATCHDOG timer to avoid freeze (timer for second GPS request)
-    //    ISHELL_SetTimer(pMe->applet.m_pIShell, GPSCBACK_DOGTIMER,
-    //                    PosDetApp_GPSInfoWatchDog, pMe);
-    //}
 }
 
 static boolean
@@ -675,7 +650,6 @@ static boolean
 PosDetApp_MultipleRequests(PosDetApp *pMe)
 {
     int ret = 0;
-    pMe->maxGPSReqCnt = 10;      // pMe->gpsReqCnt = 0 initially
 
     if (pMe->bWaitingForResp) {
         return TRUE;
@@ -701,22 +675,12 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
         return FALSE;
     }
 
-    if (pMe->gpsReqCnt < pMe->maxGPSReqCnt){
-        pMe->gpsReqCnt++;
-        PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
-                         IDF_ALIGN_LEFT | IDF_RECT_FILL,
-                         "req: %d", pMe->gpsReqCnt);
-    }
-    return TRUE;
-}
+    pMe->gpsReqCnt++;
+    PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
+                     IDF_ALIGN_LEFT | IDF_RECT_FILL,
+                     "req : %d", pMe->gpsReqCnt);
 
-static void
-PosDetApp_GPSInfoWatchDog(void *pd)
-{
-    PosDetApp *pMe = (PosDetApp*)pd;
-    CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER | IDF_RECT_FILL,
-                     "PosDetApp: WatchDog: GetGPSInfo failed");
+    return TRUE;
 }
 
 static void
@@ -737,10 +701,10 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
     IDISPLAY_ClearScreen(pMe->applet.m_pIDisplay);
 
     PosDetApp_Printf(pMe, line++, 2, AEE_FONT_BOLD, IDF_ALIGN_LEFT,
-                     "req: %d", pMe->gpsReqCnt);
+                     "req : %d", pMe->gpsReqCnt);
 
     PosDetApp_Printf(pMe, line++, 2, AEE_FONT_BOLD, IDF_ALIGN_LEFT,
-                     "resp: %d", pMe->gpsRespCnt);
+                     "resp : %d", pMe->gpsRespCnt);
 
     GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
     PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,

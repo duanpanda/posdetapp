@@ -1,3 +1,6 @@
+#ifndef RYANUTILS_H
+#define RYANUTILS_H
+
 #include "AEEStdLib.h"
 #include "AEEDisp.h"
 #include "AEEAppGen.h"
@@ -13,3 +16,5 @@ void xDisplay(AEEApplet *pMe, int nLine, int nCol, AEEFont fnt, uint32 dwFlags,
               const char *psz);
 
 int DistToSemi(const char *pszStr);
+
+#endif /* ifndef RYANUTILS_H */

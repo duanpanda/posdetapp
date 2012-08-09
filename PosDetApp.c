@@ -16,17 +16,20 @@
 #include "RyanUtils.h"
 #include "PosDetApp_res.h"
 
-typedef enum {
+typedef uint8 RequestType;
+
+enum {
     SINGLE_REQUEST,
     MULTIPLE_REQUESTS
-} RequestType;
+};
 
 typedef struct _CSettings
 {
+    AEEGPSServer server;
     AEEGPSOpt    optim;
     AEEGPSQos    qos;
-    AEEGPSServer server;
     RequestType  reqType;
+    uint8        reserved;
 } CSettings;
 
 typedef enum {
@@ -78,21 +81,26 @@ typedef struct _TrackState{
     /**************************/
 } TrackState;
 
+#define REPORT_STR_BUF_SIZE 256
+
 typedef struct _PosDetApp {
     AEEApplet applet;     // First element of this structure must be AEEApplet.
     AEEDeviceInfo deviceInfo;   // Copy of device info for easy access.
 
-    IPosDet  *piPosDet;
-    AEECallback cbGetGPSInfo;
-    AEECallback cbReqInterval;
+    IPosDet  *pIPosDet;
+    IFileMgr *pIFileMgr;
+    IFile    *pLogFile;
+    AEECallback  cbGetGPSInfo;
+    AEECallback  cbReqInterval;
     AEEGPSConfig gpsConfig;
-    AEEGPSInfo gpsInfo;
+    AEEGPSInfo   gpsInfo;
+    CSettings    gpsSettings;
+    char *pReportStr;
 
     int gpsRespCnt;
     int gpsReqCnt; // to track how many GPS requests are sent
     boolean bWaitingForResp;
-
-    CSettings gpsSettings;
+    uint8   reserved[3];
 } PosDetApp;
 
 /*-----------------------------------------------------------------------------
@@ -106,6 +114,7 @@ static boolean PosDetApp_HandleEvent(PosDetApp *pMe, AEEEvent eCode,
 static boolean PosDetApp_Start(PosDetApp *pMe);
 static void PosDetApp_Stop(PosDetApp *pMe);
 
+/* test */
 static void PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
                              uint32 dwFlags, const char *szFormat, ...);
 
@@ -113,13 +122,20 @@ static uint32 PosDetApp_InitGPSSettings(PosDetApp *pMe);
 static uint32 PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile);
 static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
 //static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
+static int PosDetApp_DecodePosInfo(PosDetApp *pMe, AEEPositionInfoEx *pInfo);
+static void PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo);
+
+/* test */
+static int PosDetApp_GetLogFile(PosDetApp *pMe);
+static void PosDetApp_LogPos(PosDetApp *pMe);
 
 /* test */
 static void PosDetApp_CnfgTrackNetwork(PosDetApp *pMe);
 /* test */
 static void PosDetApp_ShowGPSInfo(PosDetApp *pMe);
-static void PosDetApp_CBGetGPSInfo_0(void *pd);
-static void PosDetApp_CBGetGPSInfo_1(void *pd);
+
+static void PosDetApp_CBGetGPSInfo_SingleReq(void *pd);
+static void PosDetApp_CBGetGPSInfo_MultiReq(void *pd);
 static boolean PosDetApp_SingleRequest(PosDetApp *pMe);
 static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
 
@@ -166,37 +182,68 @@ AEEClsCreateInstance(AEECLSID ClsId, IShell * piShell, IModule * piModule,
 boolean
 PosDetApp_InitAppData(PosDetApp * pMe)
 {
-    // Get the device information for this handset.
-    // Reference all the data by looking at the pMe->deviceInfo structure.
-    // Check the API reference guide for all the handy device info you can get.
+    int err = 0;
+
+    /* Get device info. */
     pMe->deviceInfo.wStructSize = sizeof(pMe->deviceInfo);
     ISHELL_GetDeviceInfo(pMe->applet.m_pIShell,&pMe->deviceInfo);
 
-    if (ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_POSDET,
-                              (void**)&pMe->piPosDet)
-        != SUCCESS) {
-
+    /* Create IPosDet. */
+    err = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_POSDET,
+        (void**)&pMe->pIPosDet);
+    if (err != SUCCESS) {
+        DBGPRINTF("Failed to create IPosDet Interface");
         return FALSE;
     }
 
-    return TRUE;// No failures up to this point, so return success.
+    /* Create IFileMgr. */
+    err = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_FILEMGR,
+        (void**)&pMe->pIFileMgr);
+    if (err != SUCCESS) {
+        DBGPRINTF("Failed to create IFileMgr Interface");
+        return FALSE;
+    }
+
+    /* Create report string buffer. */
+    pMe->pReportStr = (char*)MALLOC(REPORT_STR_BUF_SIZE);
+    if (NULL == pMe->pReportStr) {
+        DBGPRINTF("Failed MALLOC %d bytes. err = ENOMEMORY",
+                  REPORT_STR_BUF_SIZE);
+        return FALSE;
+    }
+    MEMSET(pMe->pReportStr, 0, REPORT_STR_BUF_SIZE);
+
+#ifdef _DEBUG
+    /* test: Create log file. */
+    err = PosDetApp_GetLogFile(pMe);
+    if (err != SUCCESS) {
+        DBGPRINTF("Failed to create file " SPD_LOG_FILE " err = %d", err);
+        return FALSE;
+    }
+#endif /* _DEBUG */
+
+    return TRUE;
 }
 
 void
 PosDetApp_FreeAppData(PosDetApp * pMe)
 {
-    // Insert your code here for freeing any resources you have allocated...
-
-    // Example to use for releasing each interface:
-    // if ( NULL != pMe->piMenuCtl ) {     // check for NULL first
-    //     IMenuCtl_Release(pMe->piMenuCtl)// release the interface
-    //     pMe->piMenuCtl = NULL;          // set to NULL so no problems later
-    // }
-    if (pMe->piPosDet) {
-        IPOSDET_Release(pMe->piPosDet);
-        pMe->piPosDet = NULL;
+#ifdef _DEBUG
+    if (pMe->pLogFile) {
+        IFILE_Release(pMe->pLogFile);
+        pMe->pLogFile = NULL;
     }
+#endif  /* _DEBUG */
 
+    FREEIF(pMe->pReportStr);
+    if (pMe->pIFileMgr) {
+        IFILEMGR_Release(pMe->pIFileMgr);
+        pMe->pIFileMgr = NULL;
+    }
+    if (pMe->pIPosDet) {
+        IPOSDET_Release(pMe->pIPosDet);
+        pMe->pIPosDet = NULL;
+    }
 }
 
 static boolean
@@ -268,18 +315,22 @@ PosDetApp_Start(PosDetApp *pMe)
     }
 
     // Get/Set GPS configuration.
-    ret = IPOSDET_GetGPSConfig(pMe->piPosDet, &pMe->gpsConfig);
+    ret = IPOSDET_GetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
     if (ret != SUCCESS) {
         DBGPRINTF("GetGPSConfig err = %d", ret);
         return FALSE;
     }
 
     pMe->gpsConfig.mode = AEEGPS_MODE_DEFAULT;
-    ret = IPOSDET_SetGPSConfig(pMe->piPosDet, &pMe->gpsConfig);
+    ret = IPOSDET_SetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
     if (ret != SUCCESS) {
         DBGPRINTF("SetGPSConfig err = %d", ret);
         return FALSE;
     }
+
+#ifdef _DEBUG
+    (void)IFILE_Write(pMe->pLogFile, "\r\n", STRLEN("\r\n"));
+#endif /* _DEBUG */
 
     // Request a fix.
     /* TODO: We can choose MultipleRequests or SingleRequest according to the
@@ -307,50 +358,40 @@ PosDetApp_Stop(PosDetApp *pMe)
 static uint32
 PosDetApp_InitGPSSettings(PosDetApp *pMe)
 {
-    IFileMgr *pIFileMgr = NULL;
-    IFile *pIConfigFile = NULL;
+    IFile *pCnfgFile = NULL;
     uint32 nResult = 0;
 
     pMe->gpsSettings.reqType = MULTIPLE_REQUESTS;
 
-    nResult = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_FILEMGR,
-                                    (void**)&pIFileMgr);
-    if (SUCCESS != nResult) {
-        DBGPRINTF("Failed to create IFileMgr Interface");
-        return nResult;
-    }
-
     // If the config file exists, open it and read the settings.  Otherwise, we
-    // need to create a new config file.
-    pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE, _OFM_READ);
-    if (NULL == pIConfigFile) {
+    // need to create a new config file and write default settings in.
+    pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE, _OFM_READ);
+    if (NULL == pCnfgFile) {
         nResult = EFAILED;
         DBGPRINTF("Failed to Open File " SPD_CONFIG_FILE);
-        pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
-                                         _OFM_CREATE);
-        if (NULL == pIConfigFile) {
-            int err = IFILEMGR_GetLastError(pIFileMgr);
+        pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
+                                      _OFM_CREATE);
+        if (NULL == pCnfgFile) {
+            int err = IFILEMGR_GetLastError(pMe->pIFileMgr);
             DBGPRINTF("Failed to Create File " SPD_CONFIG_FILE " err = %d",
                       err);
             nResult = EFAILED;
         }
         else {
-            pMe->gpsSettings.optim  = AEEGPS_OPT_DEFAULT;
-            pMe->gpsSettings.qos    = SPD_QOS_DEFAULT;
+            pMe->gpsSettings.optim = AEEGPS_OPT_DEFAULT;
+            pMe->gpsSettings.qos = SPD_QOS_DEFAULT;
             pMe->gpsSettings.server.svrType = AEEGPS_SERVER_DEFAULT;
-            nResult = PosDetApp_WriteGPSSettings(pMe, pIConfigFile);
+            nResult = PosDetApp_WriteGPSSettings(pMe, pCnfgFile);
         }
     }
     else {
-        nResult = PosDetApp_ReadGPSSettings(pMe, pIConfigFile);
+        nResult = PosDetApp_ReadGPSSettings(pMe, pCnfgFile);
     }
 
     // Free the IFileMgr and IFile instances
-    if (pIConfigFile) {
-        (void)IFILE_Release(pIConfigFile);
+    if (pCnfgFile) {
+        (void)IFILE_Release(pCnfgFile);
     }
-
-    (void)IFILEMGR_Release(pIFileMgr);
 
     return nResult;
 }
@@ -369,6 +410,9 @@ PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile)
     (void)IFILE_GetInfo(pIFile, &fileInfo);
     // Allocate enough memory to read the full text into memory
     pBuf = MALLOC(fileInfo.dwSize);
+    if (NULL == pBuf) {
+        return ENOMEMORY;
+    }
 
     nRead = IFILE_Read(pIFile, (void*)pBuf, fileInfo.dwSize);
     if ((uint32)nRead != fileInfo.dwSize) {
@@ -429,13 +473,17 @@ PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile)
 
     return SUCCESS;
 }
+
 uint32
 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile)
 {
-    char *pszBuf;
-    int32 nResult;
+    char *pszBuf = NULL;
+    int32 nResult = 0;
 
     pszBuf = MALLOC(1024);
+    if (NULL == pszBuf) {
+        return ENOMEMORY;
+    }
 
     // Truncate the file, in case it already contains data
     (void)IFILE_Truncate(pIFile, 0);
@@ -509,50 +557,39 @@ PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile)
 //uint32
 //PosDetApp_SaveGPSSettings(PosDetApp *pMe )
 //{
-//    IFileMgr *pIFileMgr = NULL;
-//    IFile *pIConfigFile = NULL;
+//    IFile *pCnfgFile = NULL;
 //    uint32 nResult = 0;
-//
-//    // Create the instance of IFileMgr
-//    nResult = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_FILEMGR,
-//                                    (void**)&pIFileMgr);
-//    if (SUCCESS != nResult) {
-//        return nResult;
-//    }
 //
 //    // If the config file exists, open it and read the settings.  Otherwise, we
 //    // need to create a new config file.
-//    pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
+//    pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
 //                                     _OFM_READWRITE);
-//    if (NULL == pIConfigFile) {
-//        nResult = IFILEMGR_GetLastError(pIFileMgr);
+//    if (NULL == pCnfgFile) {
+//        nResult = IFILEMGR_GetLastError(pMe->pIFileMgr);
 //        if (nResult == EFILENOEXISTS) {
-//            pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
+//            pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
 //                                             _OFM_CREATE);
-//            if (NULL == pIConfigFile) {
-//                nResult = IFILEMGR_GetLastError(pIFileMgr);
+//            if (NULL == pCnfgFile) {
+//                nResult = IFILEMGR_GetLastError(pMe->pIFileMgr);
 //                DBGPRINTF("File Create Error %d", nResult);
-//                IFILEMGR_Release(pIFileMgr);
+//                IFILEMGR_Release(pMe->pIFileMgr);
 //                return nResult;
 //            }
-//            nResult = PosDetApp_WriteGPSSettings( pMe, pIConfigFile );
+//            nResult = PosDetApp_WriteGPSSettings( pMe, pCnfgFile );
 //        }
 //        else {
 //            DBGPRINTF("File Open Error %d", nResult);
-//            IFILEMGR_Release(pIFileMgr);
 //            return nResult;
 //        }
 //    }
 //    else {
-//        nResult = PosDetApp_WriteGPSSettings(pMe, pIConfigFile);
+//        nResult = PosDetApp_WriteGPSSettings(pMe, pCnfgFile);
 //    }
 //
 //    // Free the IFileMgr and IFile instances
-//    if (pIConfigFile) {
-//        (void)IFILE_Release(pIConfigFile);
+//    if (pCnfgFile) {
+//        (void)IFILE_Release(pCnfgFile);
 //    }
-//
-//    IFILEMGR_Release(pIFileMgr);
 //
 //    return nResult;
 //}
@@ -576,7 +613,7 @@ PosDetApp_CnfgTrackNetwork(PosDetApp *pMe)
     MEMSET(&pMe->gpsConfig, 0, sizeof(AEEGPSConfig));
 
     // Retrieve the current configuration.
-    err = IPOSDET_GetGPSConfig(pMe->piPosDet, &pMe->gpsConfig);
+    err = IPOSDET_GetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
     if (err != SUCCESS){
         DBGPRINTF("PosDetApp: Failed to retrieve config. err = %d", err);
     }
@@ -588,7 +625,7 @@ PosDetApp_CnfgTrackNetwork(PosDetApp *pMe)
     pMe->gpsConfig.qos = pMe->gpsSettings.qos;
     pMe->gpsConfig.server.svrType = AEEGPS_SERVER_DEFAULT;
 
-    err = IPOSDET_SetGPSConfig(pMe->piPosDet, &pMe->gpsConfig);
+    err = IPOSDET_SetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
 
     if (err != SUCCESS) {
         DBGPRINTF("PosDetApp: Configuration could not be set! err = %d", err);
@@ -596,11 +633,12 @@ PosDetApp_CnfgTrackNetwork(PosDetApp *pMe)
 }
 
 static void
-PosDetApp_CBGetGPSInfo_0(void *pd)
+PosDetApp_CBGetGPSInfo_SingleReq(void *pd)
 {
     PosDetApp *pMe = (PosDetApp*)pd;
     if(pMe->gpsInfo.status == AEEGPS_ERR_NO_ERR) {
         PosDetApp_ShowGPSInfo(pMe);
+        PosDetApp_LogPos(pMe);
     }
     else {
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
@@ -610,7 +648,7 @@ PosDetApp_CBGetGPSInfo_0(void *pd)
 }
 
 static void
-PosDetApp_CBGetGPSInfo_1(void *pd)
+PosDetApp_CBGetGPSInfo_MultiReq(void *pd)
 {
     PosDetApp *pMe = (PosDetApp*)pd;
     pMe->gpsRespCnt++;
@@ -620,6 +658,7 @@ PosDetApp_CBGetGPSInfo_1(void *pd)
         || (pMe->gpsInfo.status == AEEGPS_ERR_INFO_UNAVAIL
             && pMe->gpsInfo.fValid)) {
         PosDetApp_ShowGPSInfo(pMe);
+        PosDetApp_LogPos(pMe);
         ISHELL_SetTimerEx(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
                           &pMe->cbReqInterval);
     }
@@ -635,8 +674,8 @@ static boolean
 PosDetApp_SingleRequest(PosDetApp *pMe)
 {
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_0, (void*)pMe);
-    if (IPOSDET_GetGPSInfo(pMe->piPosDet,
+    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_SingleReq, (void*)pMe);
+    if (IPOSDET_GetGPSInfo(pMe->pIPosDet,
                            AEEGPS_GETINFO_LOCATION | AEEGPS_GETINFO_ALTITUDE
                            | AEEGPS_GETINFO_VELOCITY,
                            AEEGPS_ACCURACY_LEVEL6,
@@ -658,8 +697,8 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
     }
 
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_1, (void*)pMe);
-    ret = IPOSDET_GetGPSInfo(pMe->piPosDet,
+    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_MultiReq, (void*)pMe);
+    ret = IPOSDET_GetGPSInfo(pMe->pIPosDet,
                              AEEGPS_GETINFO_LOCATION | AEEGPS_GETINFO_ALTITUDE
                              | AEEGPS_GETINFO_VELOCITY,
                              AEEGPS_ACCURACY_LEVEL1,
@@ -696,9 +735,7 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
     AECHAR wcText[MAXTEXTLEN];
     char szStr[MAXTEXTLEN];
 
-    ZEROAT(&posInfo);
-    posInfo.dwSize = sizeof(AEEPositionInfoEx);
-    IPOSDET_ExtractPositionInfo(pMe->piPosDet, &pMe->gpsInfo, &posInfo);
+    (void)PosDetApp_DecodePosInfo(pMe, &posInfo);
 
     IDISPLAY_ClearScreen(pMe->applet.m_pIDisplay);
 
@@ -710,7 +747,7 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
 
     GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
     PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
-                     "Time = %d %d/%d %d:%d:%d GMT+8", jd.wYear, jd.wMonth,
+                     "Time = %02d-%02d-%02d %02d:%02d:%02d GMT+8", jd.wYear, jd.wMonth,
                      jd.wDay, jd.wHour + 8, jd.wMinute, jd.wSecond);
     if (posInfo.fLatitude) {
         (void)FLOATTOWSTR(posInfo.Latitude, wcText,
@@ -749,5 +786,204 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
         WSTR_TO_STR(wcText, szStr, MAXTEXTLEN);
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
                          "VerVelocity = %s m/s", szStr);
+    }
+}
+
+
+/************************************
+ Returns:   int
+  SUCCESS : The function succeeded.
+  EPRIVLEVEL: This error is returned if the calling BREW application does not
+              have PL_POS_LOCATION privilege set in the Module Information File
+              (MIF). This privilege is required to invoke this function. Correct
+              the MIF and try again.
+  EBADPARM : This error is returned if the pi or po parameter specified are
+             invalid (NULL).
+  EUNSUPPORTED: This error is returned if this function is not supported by the
+                device.
+  EFAILED : General failure
+ ************************************/
+static int
+PosDetApp_DecodePosInfo(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
+{
+    ZEROAT(pInfo);
+    pInfo->dwSize = sizeof(AEEPositionInfoEx);
+    return IPOSDET_ExtractPositionInfo(pMe->pIPosDet, &pMe->gpsInfo, pInfo);
+}
+
+/* After this function, pMe->pReportStr contains the whole piece of GPS data
+ * to be reported to the server.*/
+static void
+PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
+{
+    /* Fill the string buffer part by part, each part from the temp string. */
+
+    char *pTmp = pMe->pReportStr;         /* points to the temp buffer */
+    int tmpBufSize = REPORT_STR_BUF_SIZE; /* size of temp buffer at pTmp */
+#define MAXTEXTLEN 22
+    AECHAR wcText[MAXTEXTLEN];  /* used to hold the float number string */
+    char szTmpStr[MAXTEXTLEN];  /* snprintf this temp string to tmp buffer */
+    int tmpStrLen = 0;          /* string length in bytes of the temp string */
+    JulianType jd;
+
+    /* message_header + terminal_id + time */
+    GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
+    SNPRINTF(pTmp, tmpBufSize,
+             "{EHL,A,02,%s,%02d-%02d-%02d %02d:%02d:%02d,",
+             TERMINAL_ID,
+             jd.wYear, jd.wMonth, jd.wDay, jd.wHour + 8, jd.wMinute,
+             jd.wSecond);
+
+    /* temp buffer head moves forward */
+    tmpStrLen = STRLEN(pTmp);
+    pTmp += tmpStrLen;
+    tmpBufSize -= tmpStrLen;
+
+    /* latitude */
+    if (pInfo->fLatitude) {
+        (void)FLOATTOWSTR(pInfo->Latitude, wcText,
+                          MAXTEXTLEN * sizeof(AECHAR));
+        WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
+    }
+    /* If no valid latitude value, the following code sprintf only "," */
+    SNPRINTF(pTmp, tmpBufSize, "%s,", szTmpStr);
+    /* Clear temp text buffers */
+    MEMSET(wcText, 0, MAXTEXTLEN * sizeof(AECHAR));
+    MEMSET(szTmpStr, 0, MAXTEXTLEN);
+
+    tmpStrLen = STRLEN(pTmp);
+    pTmp += tmpStrLen;
+    tmpBufSize -= tmpStrLen;
+
+
+    /* longitude */
+    if (pInfo->fLongitude) {
+        (void)FLOATTOWSTR(pInfo->Longitude, wcText,
+                          MAXTEXTLEN * sizeof(AECHAR));
+        WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
+    }
+    SNPRINTF(pTmp, tmpBufSize, "%s,", szTmpStr);
+    MEMSET(wcText, 0, MAXTEXTLEN * sizeof(AECHAR));
+    MEMSET(szTmpStr, 0, MAXTEXTLEN);
+
+    tmpStrLen = STRLEN(pTmp);
+    pTmp += tmpStrLen;
+    tmpBufSize -= tmpStrLen;
+
+    /* altitude */
+    if (pInfo->fAltitude) {
+        SNPRINTF(pTmp, tmpBufSize, "%d,", pInfo->nAltitude);
+    }
+    else {
+        SNPRINTF(pTmp, tmpBufSize, ",");
+    }
+
+    tmpStrLen = STRLEN(pTmp);
+    pTmp += tmpStrLen;
+    tmpBufSize -= tmpStrLen;
+
+    /* velocity */
+    if (pInfo->fHorVelocity) {
+        (void)FLOATTOWSTR(pInfo->HorVelocity, wcText,
+                          MAXTEXTLEN * sizeof(AECHAR));
+        WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
+    }
+    SNPRINTF(pTmp, tmpStrLen, "%s,", szTmpStr);
+    MEMSET(wcText, 0, MAXTEXTLEN * sizeof(AECHAR));
+    MEMSET(szTmpStr, 0, MAXTEXTLEN);
+
+/*
+    if (pInfo->fVerVelocity) {
+        (void)FLOATTOWSTR(pInfo->VerVelocity, wcText,
+                          MAXTEXTLEN * sizeof(AECHAR));
+        WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
+        SNPRINTF(pTmp, tmpBufSize, "%s,", szTmpStr)
+    }
+    MEMSET(wcText, 0, MAXTEXTLEN * sizeof(AECHAR));
+    MEMSET(szTmpStr, 0, MAXTEXTLEN);
+
+    tmpStrLen = STRLEN(pTmp);
+    pTmp += tmpStrLen;
+    tmpBufSize -= tmpStrLen;
+*/
+
+    /* heading */
+    if (pInfo->fHeading) {
+        (void)FLOATTOWSTR(pInfo->Heading, wcText, MAXTEXTLEN * sizeof(AECHAR));
+        WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
+    }
+    SNPRINTF(pTmp, tmpBufSize, "%s,", szTmpStr);
+    MEMSET(wcText, 0, MAXTEXTLEN * sizeof(AECHAR));
+    MEMSET(szTmpStr, 0, MAXTEXTLEN);
+
+    tmpStrLen = STRLEN(pTmp);
+    pTmp += tmpStrLen;
+    tmpBufSize -= tmpStrLen;
+
+    /* mileage + terminal_status + terminal_alarm + satellite_num +
+       policeman_id + message_tail */
+    SNPRINTF(pTmp, tmpBufSize, "%s,%s,%s,%s,%s,EHL}",
+             MILEAGE, TERMINAL_STATUS, TERMINAL_ALARM, SATELLITE_NUM,
+             POLICEMAN_ID);
+}
+
+/* If create log file successfully, return SUCCESS, otherwise return fail code. */
+static int
+PosDetApp_GetLogFile(PosDetApp *pMe)
+{
+    int err = 0;
+
+    if (IFILEMGR_Test(pMe->pIFileMgr, SPD_LOG_FILE) != SUCCESS) {
+        pMe->pLogFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_LOG_FILE,
+                                          _OFM_CREATE);
+        if (NULL == pMe->pLogFile) {
+            err = IFILEMGR_GetLastError(pMe->pIFileMgr);
+            return err;
+        }
+    }
+
+    /* The file has existed. */
+    if (NULL == pMe->pLogFile) {
+        pMe->pLogFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_LOG_FILE,
+                                          _OFM_APPEND);
+        if (NULL == pMe->pLogFile) {
+            err = IFILEMGR_GetLastError(pMe->pIFileMgr);
+            return err;
+        }
+    }
+
+    return SUCCESS;
+}
+
+static void
+PosDetApp_LogPos(PosDetApp *pMe)
+{
+#define NEWLINE "\r\n"
+
+    AEEPositionInfoEx posInfo;
+    int err = 0;
+    uint32 wroteBytes;
+
+    err = PosDetApp_DecodePosInfo(pMe, &posInfo);
+    if (err != SUCCESS) {
+        DBGPRINTF("Decode posInfo failed: err = %d", err);
+        return;
+    }
+
+    PosDetApp_MakeReportStr(pMe, &posInfo);
+
+    wroteBytes = IFILE_Write(pMe->pLogFile, pMe->pReportStr,
+                             STRLEN(pMe->pReportStr));
+    if (0 == wroteBytes) {
+        err = IFILEMGR_GetLastError(pMe->pIFileMgr);
+        DBGPRINTF("Write log file failed: err = %d", err);
+        return;
+    }
+
+    /* Write the Newline character */
+    wroteBytes = IFILE_Write(pMe->pLogFile, NEWLINE, STRLEN(NEWLINE));
+    if (wroteBytes != STRLEN(NEWLINE)) {
+        err = IFILEMGR_GetLastError(pMe->pIFileMgr);
+        DBGPRINTF("Write log file failed: err = %d", err);
     }
 }

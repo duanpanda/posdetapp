@@ -16,7 +16,18 @@
 #define SPD_CONFIG_SVR_PORT_STRING  "GPS_SERVER_PORT = "
 #define SPD_QOS_DEFAULT       127
 
-//#define GPSCBACK_DOGTIMER 30000 // milliseconds
 #define GPSCBACK_INTERVAL 0     // seconds
+
+#ifdef _DEBUG
+#define SPD_LOG_FILE                "log.txt"
+#endif
+
+// Only for test
+#define TERMINAL_ID     "13800000000"
+#define MILEAGE         "8888.22"
+#define TERMINAL_STATUS "0061006"
+#define TERMINAL_ALARM  "0006007"
+#define SATELLITE_NUM   "6"
+#define POLICEMAN_ID    ""
 
 #endif /* #ifndef CPOSDETAPP_H */

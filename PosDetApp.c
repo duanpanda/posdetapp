@@ -112,7 +112,7 @@ static void PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
 static uint32 PosDetApp_InitGPSSettings(PosDetApp *pMe);
 static uint32 PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile);
 static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
-static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
+//static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
 
 /* test */
 static void PosDetApp_CnfgTrackNetwork(PosDetApp *pMe);
@@ -434,7 +434,6 @@ PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile)
 {
     char *pszBuf;
     int32 nResult;
-    int nWritten = 0;
 
     pszBuf = MALLOC(1024);
 
@@ -507,56 +506,56 @@ PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile)
     return SUCCESS;
 }
 
-uint32
-PosDetApp_SaveGPSSettings(PosDetApp *pMe )
-{
-    IFileMgr *pIFileMgr = NULL;
-    IFile *pIConfigFile = NULL;
-    uint32 nResult = 0;
-
-    // Create the instance of IFileMgr
-    nResult = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_FILEMGR,
-                                    (void**)&pIFileMgr);
-    if (SUCCESS != nResult) {
-        return nResult;
-    }
-
-    // If the config file exists, open it and read the settings.  Otherwise, we
-    // need to create a new config file.
-    pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
-                                     _OFM_READWRITE);
-    if (NULL == pIConfigFile) {
-        nResult = IFILEMGR_GetLastError(pIFileMgr);
-        if (nResult == EFILENOEXISTS) {
-            pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
-                                             _OFM_CREATE);
-            if (NULL == pIConfigFile) {
-                nResult = IFILEMGR_GetLastError(pIFileMgr);
-                DBGPRINTF("File Create Error %d", nResult);
-                IFILEMGR_Release(pIFileMgr);
-                return nResult;
-            }
-            nResult = PosDetApp_WriteGPSSettings( pMe, pIConfigFile );
-        }
-        else {
-            DBGPRINTF("File Open Error %d", nResult);
-            IFILEMGR_Release(pIFileMgr);
-            return nResult;
-        }
-    }
-    else {
-        nResult = PosDetApp_WriteGPSSettings(pMe, pIConfigFile);
-    }
-
-    // Free the IFileMgr and IFile instances
-    if (pIConfigFile) {
-        (void)IFILE_Release(pIConfigFile);
-    }
-
-    IFILEMGR_Release(pIFileMgr);
-
-    return nResult;
-}
+//uint32
+//PosDetApp_SaveGPSSettings(PosDetApp *pMe )
+//{
+//    IFileMgr *pIFileMgr = NULL;
+//    IFile *pIConfigFile = NULL;
+//    uint32 nResult = 0;
+//
+//    // Create the instance of IFileMgr
+//    nResult = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_FILEMGR,
+//                                    (void**)&pIFileMgr);
+//    if (SUCCESS != nResult) {
+//        return nResult;
+//    }
+//
+//    // If the config file exists, open it and read the settings.  Otherwise, we
+//    // need to create a new config file.
+//    pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
+//                                     _OFM_READWRITE);
+//    if (NULL == pIConfigFile) {
+//        nResult = IFILEMGR_GetLastError(pIFileMgr);
+//        if (nResult == EFILENOEXISTS) {
+//            pIConfigFile = IFILEMGR_OpenFile(pIFileMgr, SPD_CONFIG_FILE,
+//                                             _OFM_CREATE);
+//            if (NULL == pIConfigFile) {
+//                nResult = IFILEMGR_GetLastError(pIFileMgr);
+//                DBGPRINTF("File Create Error %d", nResult);
+//                IFILEMGR_Release(pIFileMgr);
+//                return nResult;
+//            }
+//            nResult = PosDetApp_WriteGPSSettings( pMe, pIConfigFile );
+//        }
+//        else {
+//            DBGPRINTF("File Open Error %d", nResult);
+//            IFILEMGR_Release(pIFileMgr);
+//            return nResult;
+//        }
+//    }
+//    else {
+//        nResult = PosDetApp_WriteGPSSettings(pMe, pIConfigFile);
+//    }
+//
+//    // Free the IFileMgr and IFile instances
+//    if (pIConfigFile) {
+//        (void)IFILE_Release(pIConfigFile);
+//    }
+//
+//    IFILEMGR_Release(pIFileMgr);
+//
+//    return nResult;
+//}
 
 static void
 PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,

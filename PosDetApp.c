@@ -713,8 +713,6 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
     PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
                      "Time = %d %d/%d %d:%d:%d GMT+8", jd.wYear, jd.wMonth,
                      jd.wDay, jd.wHour + 8, jd.wMinute, jd.wSecond);
-    PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
-                     "dwSize = %d bytes", posInfo.dwSize);
     if (posInfo.fLatitude) {
         (void)FLOATTOWSTR(posInfo.Latitude, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));

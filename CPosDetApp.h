@@ -16,7 +16,7 @@
 #define SPD_CONFIG_SVR_PORT_STRING  "GPS_SERVER_PORT = "
 #define SPD_QOS_DEFAULT       127
 
-#define GPSCBACK_INTERVAL     5    // seconds
+#define GPSCBACK_INTERVAL     0    // seconds
 
 #define REPORT_STR_BUF_SIZE   256
 

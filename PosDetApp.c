@@ -855,7 +855,6 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     pTmp += tmpStrLen;
     tmpBufSize -= tmpStrLen;
 
-
     /* longitude */
     if (pInfo->fLongitude) {
         (void)FLOATTOWSTR(pInfo->Longitude, wcText,
@@ -927,7 +926,8 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
              POLICEMAN_ID);
 }
 
-/* If create log file successfully, return SUCCESS, otherwise return fail code. */
+/* If create log file successfully, return SUCCESS, otherwise return fail
+ * code. */
 static int
 PosDetApp_GetLogFile(PosDetApp *pMe)
 {

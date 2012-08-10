@@ -103,6 +103,8 @@ typedef struct _PosDetApp {
 
     int gpsRespCnt;
     int gpsReqCnt; // to track how many GPS requests are sent
+    int tcpTryCnt;
+    int tcpConnMaxTry; // max times to try connecting to server
     boolean bWaitingForResp;
     boolean bConnected; // is connected to server
     boolean bSending;
@@ -134,6 +136,7 @@ static boolean PosDetApp_StartTCPClient(PosDetApp *pMe);
 static void PosDetApp_TryConnect(void *po);
 static void PosDetApp_TryWriteToSvr(void *po);
 static void PosDetApp_ProcessGPSData(PosDetApp *pMe);
+static boolean PosDetApp_RequestAFix(PosDetApp *pMe);
 
 /* test */
 static int PosDetApp_GetLogFile(PosDetApp *pMe);
@@ -234,6 +237,8 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     pMe->uBytesSent = 0;
     pMe->bSending = FALSE;
     pMe->bSendSucceeds = FALSE;
+    pMe->tcpTryCnt = 0;
+    pMe->tcpConnMaxTry = 5;
 
     /* Create ISockPort. */
     if (!PosDetApp_StartTCPClient(pMe)) {
@@ -361,27 +366,10 @@ PosDetApp_Start(PosDetApp *pMe)
 
     // Try connecting to the server.
     PosDetApp_TryConnect(pMe);
-    /* TODO: now it only try once to connect, if fail, exit the applet.  We
-     * might need to give it more tries, but when to start getting GPS data?
-     * Maybe only when connected can we start getting GPS data.  */
-    //if (!pMe->bConnected) {
-    //    return FALSE;
-    //}
 
-    // Request a fix.
-    /* TODO: We can choose MultipleRequests or SingleRequest according to the
-       settings in the configuration file. */
-    if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
-        PosDetApp_CnfgTrackNetwork(pMe);
-        CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
-        return PosDetApp_MultipleRequests(pMe);
-    }
-    else if (pMe->gpsSettings.reqType == SINGLE_REQUEST) {
-        return PosDetApp_SingleRequest(pMe);
-    }
-    else {
-        return TRUE;
-    }
+    // Only when connection established does it request a fix.
+
+    return TRUE;
 }
 
 static void
@@ -1057,11 +1045,19 @@ PosDetApp_TryConnect(void *po)
     int ret;
     PosDetApp *pMe = (PosDetApp*)po;
 
+    if (pMe->tcpTryCnt >= pMe->tcpConnMaxTry) {
+        DBGPRINTF("PosDetApp: cannot connect to server after %d tries.",
+                  pMe->tcpTryCnt);
+        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        return;
+    }
+
     // connect to the distant server
     ret = ISockPort_Connect(pMe->pISockPort,  // ISockPort object
                             &pMe->sockAddr    // pointer to dest socket
                                               // address struct
         );
+    pMe->tcpTryCnt++;
 
     if (AEEPORT_WAIT == ret) {
         ISockPort_WriteableEx(pMe->pISockPort, &pMe->cbSendTo,
@@ -1069,16 +1065,27 @@ PosDetApp_TryConnect(void *po)
         pMe->bConnected = FALSE;
         return;
     }
-
-    if (AEE_SUCCESS != ret) {
+    else if (AEE_NET_ETIMEDOUT == ret || AEE_NET_ECONNREFUSED == ret) {
+        PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
+                         IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
+                         "PosDetApp: SockPort timed out! %d Tries. Close Applet.");
+        DBGPRINTF("PosDetApp: SockPort timed out! Close Applet.",
+                  pMe->tcpTryCnt);
+        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        return;
+    }
+    else if (AEE_SUCCESS != ret) {
         pMe->bConnected = FALSE;
         /* TODO */
-        DBGPRINTF("SockPort connect err = %d", ret);
+        DBGPRINTF("PosDetApp: SockPort connect err = %d", ret);
         return;
     }
 
     // (AEE_SUCCESS == ret), the SockPort is connected
     pMe->bConnected = TRUE;
+
+    // Start a request for GPS fix.
+    (void)PosDetApp_RequestAFix(pMe);
 }
 
 static void
@@ -1145,4 +1152,23 @@ PosDetApp_ProcessGPSData(PosDetApp *pMe)
     /* test */
     PosDetApp_ShowGPSInfo(pMe);
     PosDetApp_LogPos(pMe);
+}
+
+static boolean
+PosDetApp_RequestAFix(PosDetApp *pMe)
+{
+    // Request a fix.
+    /* TODO: We can choose MultipleRequests or SingleRequest according to the
+    settings in the configuration file. */
+    if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
+        PosDetApp_CnfgTrackNetwork(pMe);
+        CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
+        return PosDetApp_MultipleRequests(pMe);
+    }
+    else if (pMe->gpsSettings.reqType == SINGLE_REQUEST) {
+        return PosDetApp_SingleRequest(pMe);
+    }
+    else {
+        return TRUE;
+    }
 }

@@ -11,6 +11,7 @@
 #include "AEEPosDet.h"
 #include "AEEStdLib.h"
 #include "AEEFile.h"
+#include "AEESockPort.h"
 
 #include "CPosDetApp.h"
 #include "RyanUtils.h"
@@ -81,15 +82,17 @@ typedef struct _TrackState{
     /**************************/
 } TrackState;
 
-#define REPORT_STR_BUF_SIZE 256
-
 typedef struct _PosDetApp {
     AEEApplet applet;     // First element of this structure must be AEEApplet.
     AEEDeviceInfo deviceInfo;   // Copy of device info for easy access.
 
-    IPosDet  *pIPosDet;
-    IFileMgr *pIFileMgr;
-    IFile    *pLogFile;
+    IPosDet      *pIPosDet;
+    IFileMgr     *pIFileMgr;
+    IFile        *pLogFile;
+    ISockPort    *pISockPort;
+    AEECallback  cbSendTo;
+    AEESockAddrStorage sockAddr;
+    uint32       uBytesSent;
     AEECallback  cbGetGPSInfo;
     AEECallback  cbReqInterval;
     AEEGPSConfig gpsConfig;
@@ -100,7 +103,9 @@ typedef struct _PosDetApp {
     int gpsRespCnt;
     int gpsReqCnt; // to track how many GPS requests are sent
     boolean bWaitingForResp;
-    uint8   reserved[3];
+    boolean bConnected; // is connected to server
+    boolean bSending;
+    boolean bSendSucceeds;
 } PosDetApp;
 
 /*-----------------------------------------------------------------------------
@@ -124,6 +129,9 @@ static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
 //static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
 static int PosDetApp_DecodePosInfo(PosDetApp *pMe, AEEPositionInfoEx *pInfo);
 static void PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo);
+static boolean PosDetApp_StartTCPClient(PosDetApp *pMe);
+static void PosDetApp_TryConnect(void *po);
+static void PosDetApp_TryWriteToSvr(void *po);
 
 /* test */
 static int PosDetApp_GetLogFile(PosDetApp *pMe);
@@ -213,6 +221,23 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     }
     MEMSET(pMe->pReportStr, 0, REPORT_STR_BUF_SIZE);
 
+    /* Initialize the addresses. */
+    pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
+    pMe->sockAddr.inet.port = HTONS(SERVER_PORT); // set port number
+    INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
+              &(pMe->sockAddr.inet.addr)); // set server IP addr
+
+    pMe->bWaitingForResp = FALSE;
+    pMe->bConnected = FALSE;
+    pMe->uBytesSent = 0;
+    pMe->bSending = FALSE;
+    pMe->bSendSucceeds = FALSE;
+
+    /* Create ISockPort. */
+    if (!PosDetApp_StartTCPClient(pMe)) {
+        return FALSE;
+    }
+
 #ifdef _DEBUG
     /* test: Create log file. */
     err = PosDetApp_GetLogFile(pMe);
@@ -235,6 +260,11 @@ PosDetApp_FreeAppData(PosDetApp * pMe)
     }
 #endif  /* _DEBUG */
 
+    CALLBACK_Cancel(&pMe->cbSendTo);
+    if (pMe->pISockPort) {
+        ISockPort_Release(pMe->pISockPort);
+        pMe->pISockPort = NULL;
+    }
     FREEIF(pMe->pReportStr);
     if (pMe->pIFileMgr) {
         IFILEMGR_Release(pMe->pIFileMgr);
@@ -332,6 +362,15 @@ PosDetApp_Start(PosDetApp *pMe)
     (void)IFILE_Write(pMe->pLogFile, "\r\n", STRLEN("\r\n"));
 #endif /* _DEBUG */
 
+    // Try connecting to the server.
+    PosDetApp_TryConnect(pMe);
+    /* TODO: now it only try once to connect, if fail, exit the applet.  We
+     * might need to give it more tries, but when to start getting GPS data?
+     * Maybe only when connected can we start getting GPS data.  */
+    if (!pMe->bConnected) {
+        return FALSE;
+    }
+
     // Request a fix.
     /* TODO: We can choose MultipleRequests or SingleRequest according to the
        settings in the configuration file. */
@@ -351,6 +390,7 @@ PosDetApp_Start(PosDetApp *pMe)
 static void
 PosDetApp_Stop(PosDetApp *pMe)
 {
+    (void)ISockPort_Close(pMe->pISockPort);
     CALLBACK_Cancel(&pMe->cbReqInterval);
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
 }
@@ -826,6 +866,9 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     int tmpStrLen = 0;          /* string length in bytes of the temp string */
     JulianType jd;
 
+    /* Clear the report string buffer */
+    MEMSET(pMe->pReportStr, 0, REPORT_STR_BUF_SIZE);
+
     /* message_header + terminal_id + time */
     GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
     SNPRINTF(pTmp, tmpBufSize,
@@ -986,4 +1029,113 @@ PosDetApp_LogPos(PosDetApp *pMe)
         err = IFILEMGR_GetLastError(pMe->pIFileMgr);
         DBGPRINTF("Write log file failed: err = %d", err);
     }
+}
+
+static boolean
+PosDetApp_StartTCPClient(PosDetApp *pMe)
+{
+    int ret = 0;
+
+    // Create the ISockPort object.
+    ret = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_SockPort,
+                                (void**)&(pMe->pISockPort));
+    if (AEE_SUCCESS != ret) {
+        DBGPRINTF("Failed to create ISockPort: err = %d", ret);
+        return FALSE;
+    }
+
+    // Open the SockPort.
+    ret = ISockPort_OpenEx(pMe->pISockPort,      // ISockPort pointer
+        AEE_AF_INET,                             // wFamily     = IPv4
+        AEE_SOCKPORT_STREAM,                     // socket type = TCP
+        0                                        // Protocol type:
+                                // Use 0 (recommended) to let the system
+                                // select its default
+                                // protocol for the given address
+                                // family and socket type
+        );
+    if (AEE_SUCCESS != ret) {
+        DBGPRINTF("Failed to open ISockPort: err = %d", ret);
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+static void
+PosDetApp_TryConnect(void *po)
+{
+    int ret;
+    PosDetApp *pMe = (PosDetApp*)po;
+
+    // connect to the distant server
+    ret = ISockPort_Connect(pMe->pISockPort,  // ISockPort object
+                            &pMe->sockAddr    // pointer to dest socket
+                                              // address struct
+        );
+
+    if (AEEPORT_WAIT == ret) {
+        ISockPort_WriteableEx(pMe->pISockPort, &pMe->cbSendTo,
+                              PosDetApp_TryConnect, pMe);
+        pMe->bConnected = FALSE;
+        return;
+    }
+
+    if (AEE_SUCCESS != ret) {
+        pMe->bConnected = FALSE;
+        /* TODO */
+        DBGPRINTF("SockPort connect err = %d", ret);
+        return;
+    }
+
+    // (AEE_SUCCESS == ret), the SockPort is connected
+    pMe->bConnected = TRUE;
+}
+
+static void
+PosDetApp_TryWriteToSvr(void *po)
+{
+    int ret = 0;
+    PosDetApp *pMe = (PosDetApp*)po;
+
+    // write the data to the server.
+    ret = ISockPort_Write(pMe->pISockPort, // ISockPort object
+                          pMe->pReportStr + pMe->uBytesSent, // buffer to write
+                          BUFFER_SIZE - pMe->uBytesSent);    // buffer length
+
+    // the system can't write data at the moment.
+    if (AEEPORT_WAIT == ret) {
+        ISockPort_WriteableEx(pMe->pISockPort, &pMe->cbSendTo,
+                              PosDetApp_TryWriteToSvr, pMe);
+        return;
+    }
+
+    // an error occurred. get the error code.
+    if (AEEPORT_ERROR == ret) {
+        ret = ISockPort_GetLastError(pMe->pISockPort);
+        DBGPRINTF("SockPort write err = %d", ret);
+        return;
+    }
+
+    // connection closed by the other side
+    if (AEEPORT_CLOSED == ret) {
+        /* TODO */
+        DBGPRINTF("Server closed the connection!");
+        return;
+    }
+
+    // some bytes were written.
+    pMe->uBytesSent += ret;
+
+    // Not all the bytes were written yet. Call PosDetApp_TryWriteToSvr() again
+    // when the write operation may progress.
+    if (pMe->uBytesSent < BUFFER_SIZE) {
+        ISockPort_WriteableEx(pMe->pISockPort, &pMe->cbSendTo,
+                              PosDetApp_TryWriteToSvr, pMe);
+        return;
+    }
+
+    // (BUFFER_SIZE == pMe->uBytesSent) - all the bytes were successfully
+    // written reset the bytes counter for next write operation
+    pMe->uBytesSent = 0;
 }

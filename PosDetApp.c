@@ -97,6 +97,7 @@ typedef struct _PosDetApp {
     AEECallback  cbReqInterval;
     AEEGPSConfig gpsConfig;
     AEEGPSInfo   gpsInfo;
+    AEEPositionInfoEx posInfoEx;
     CSettings    gpsSettings;
     char *pReportStr;
 
@@ -127,11 +128,12 @@ static uint32 PosDetApp_InitGPSSettings(PosDetApp *pMe);
 static uint32 PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile);
 static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
 //static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
-static int PosDetApp_DecodePosInfo(PosDetApp *pMe, AEEPositionInfoEx *pInfo);
-static void PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo);
+static int PosDetApp_DecodePosInfo(PosDetApp *pMe);
+static void PosDetApp_MakeReportStr(PosDetApp *pMe);
 static boolean PosDetApp_StartTCPClient(PosDetApp *pMe);
 static void PosDetApp_TryConnect(void *po);
 static void PosDetApp_TryWriteToSvr(void *po);
+static void PosDetApp_ProcessGPSData(PosDetApp *pMe);
 
 /* test */
 static int PosDetApp_GetLogFile(PosDetApp *pMe);
@@ -284,7 +286,8 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
         // Event to inform app to start, so start-up code is here:
     case EVT_APP_START:
         if (!PosDetApp_Start(pMe)) {
-            PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER|IDF_ALIGN_MIDDLE,
+            PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD,
+                             IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
                              "Something goes wrong!");
             ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
         }
@@ -367,9 +370,9 @@ PosDetApp_Start(PosDetApp *pMe)
     /* TODO: now it only try once to connect, if fail, exit the applet.  We
      * might need to give it more tries, but when to start getting GPS data?
      * Maybe only when connected can we start getting GPS data.  */
-    if (!pMe->bConnected) {
-        return FALSE;
-    }
+    //if (!pMe->bConnected) {
+    //    return FALSE;
+    //}
 
     // Request a fix.
     /* TODO: We can choose MultipleRequests or SingleRequest according to the
@@ -677,8 +680,7 @@ PosDetApp_CBGetGPSInfo_SingleReq(void *pd)
 {
     PosDetApp *pMe = (PosDetApp*)pd;
     if(pMe->gpsInfo.status == AEEGPS_ERR_NO_ERR) {
-        PosDetApp_ShowGPSInfo(pMe);
-        PosDetApp_LogPos(pMe);
+        PosDetApp_ProcessGPSData(pMe);
     }
     else {
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
@@ -697,8 +699,9 @@ PosDetApp_CBGetGPSInfo_MultiReq(void *pd)
     if (pMe->gpsInfo.status == AEEGPS_ERR_NO_ERR
         || (pMe->gpsInfo.status == AEEGPS_ERR_INFO_UNAVAIL
             && pMe->gpsInfo.fValid)) {
-        PosDetApp_ShowGPSInfo(pMe);
-        PosDetApp_LogPos(pMe);
+
+        PosDetApp_ProcessGPSData(pMe);
+        /* Initiate next request for GPS fix. */
         ISHELL_SetTimerEx(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
                           &pMe->cbReqInterval);
     }
@@ -714,7 +717,8 @@ static boolean
 PosDetApp_SingleRequest(PosDetApp *pMe)
 {
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_SingleReq, (void*)pMe);
+    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_SingleReq,
+                  (void*)pMe);
     if (IPOSDET_GetGPSInfo(pMe->pIPosDet,
                            AEEGPS_GETINFO_LOCATION | AEEGPS_GETINFO_ALTITUDE
                            | AEEGPS_GETINFO_VELOCITY,
@@ -737,7 +741,8 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
     }
 
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_MultiReq, (void*)pMe);
+    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_MultiReq,
+                  (void*)pMe);
     ret = IPOSDET_GetGPSInfo(pMe->pIPosDet,
                              AEEGPS_GETINFO_LOCATION | AEEGPS_GETINFO_ALTITUDE
                              | AEEGPS_GETINFO_VELOCITY,
@@ -767,15 +772,12 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
 static void
 PosDetApp_ShowGPSInfo(PosDetApp *pMe)
 {
-    AEEPositionInfoEx posInfo;
     int line = 0;
     JulianType jd;
 
 #define MAXTEXTLEN   22
     AECHAR wcText[MAXTEXTLEN];
     char szStr[MAXTEXTLEN];
-
-    (void)PosDetApp_DecodePosInfo(pMe, &posInfo);
 
     IDISPLAY_ClearScreen(pMe->applet.m_pIDisplay);
 
@@ -787,41 +789,42 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
 
     GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
     PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
-                     "Time = %02d-%02d-%02d %02d:%02d:%02d GMT+8", jd.wYear, jd.wMonth,
-                     jd.wDay, jd.wHour + 8, jd.wMinute, jd.wSecond);
-    if (posInfo.fLatitude) {
-        (void)FLOATTOWSTR(posInfo.Latitude, wcText,
+                     "Time = %02d-%02d-%02d %02d:%02d:%02d GMT+8", jd.wYear,
+                     jd.wMonth, jd.wDay, jd.wHour + 8, jd.wMinute, jd.wSecond);
+    if (pMe->posInfoEx.fLatitude) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.Latitude, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szStr, MAXTEXTLEN);
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
                          "Latitude = %s d", szStr);
     }
-    if (posInfo.fLongitude) {
-        (void)FLOATTOWSTR(posInfo.Longitude, wcText,
+    if (pMe->posInfoEx.fLongitude) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.Longitude, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szStr, MAXTEXTLEN);
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
                          "Longitude = %s d", szStr);
     }
-    if (posInfo.fAltitude) {
+    if (pMe->posInfoEx.fAltitude) {
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
-                         "Altitude = %d m", posInfo.nAltitude);
+                         "Altitude = %d m", pMe->posInfoEx.nAltitude);
     }
-    if (posInfo.fHeading) {
-        (void)FLOATTOWSTR(posInfo.Heading, wcText, MAXTEXTLEN * sizeof(AECHAR));
+    if (pMe->posInfoEx.fHeading) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.Heading, wcText,
+                          MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szStr, MAXTEXTLEN);
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
                          "Heading = %s d", szStr);
     }
-    if (posInfo.fHorVelocity) {
-        (void)FLOATTOWSTR(posInfo.HorVelocity, wcText,
+    if (pMe->posInfoEx.fHorVelocity) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.HorVelocity, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szStr, MAXTEXTLEN);
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
                          "HorVelocity = %s m/s", szStr);
     }
-    if (posInfo.fVerVelocity) {
-        (void)FLOATTOWSTR(posInfo.VerVelocity, wcText,
+    if (pMe->posInfoEx.fVerVelocity) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.VerVelocity, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szStr, MAXTEXTLEN);
         PosDetApp_Printf(pMe, line++, 2, AEE_FONT_NORMAL, IDF_ALIGN_LEFT,
@@ -843,18 +846,19 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
                 device.
   EFAILED : General failure
  ************************************/
-static int
-PosDetApp_DecodePosInfo(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
+int
+PosDetApp_DecodePosInfo(PosDetApp *pMe)
 {
-    ZEROAT(pInfo);
-    pInfo->dwSize = sizeof(AEEPositionInfoEx);
-    return IPOSDET_ExtractPositionInfo(pMe->pIPosDet, &pMe->gpsInfo, pInfo);
+    ZEROAT(&pMe->posInfoEx);
+    pMe->posInfoEx.dwSize = sizeof(AEEPositionInfoEx);
+    return IPOSDET_ExtractPositionInfo(pMe->pIPosDet, &pMe->gpsInfo,
+                                       &pMe->posInfoEx);
 }
 
 /* After this function, pMe->pReportStr contains the whole piece of GPS data
  * to be reported to the server.*/
-static void
-PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
+void
+PosDetApp_MakeReportStr(PosDetApp *pMe)
 {
     /* Fill the string buffer part by part, each part from the temp string. */
 
@@ -883,8 +887,8 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     tmpBufSize -= tmpStrLen;
 
     /* latitude */
-    if (pInfo->fLatitude) {
-        (void)FLOATTOWSTR(pInfo->Latitude, wcText,
+    if (pMe->posInfoEx.fLatitude) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.Latitude, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
     }
@@ -899,8 +903,8 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     tmpBufSize -= tmpStrLen;
 
     /* longitude */
-    if (pInfo->fLongitude) {
-        (void)FLOATTOWSTR(pInfo->Longitude, wcText,
+    if (pMe->posInfoEx.fLongitude) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.Longitude, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
     }
@@ -913,8 +917,8 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     tmpBufSize -= tmpStrLen;
 
     /* altitude */
-    if (pInfo->fAltitude) {
-        SNPRINTF(pTmp, tmpBufSize, "%d,", pInfo->nAltitude);
+    if (pMe->posInfoEx.fAltitude) {
+        SNPRINTF(pTmp, tmpBufSize, "%d,", pMe->posInfoEx.nAltitude);
     }
     else {
         SNPRINTF(pTmp, tmpBufSize, ",");
@@ -925,8 +929,8 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     tmpBufSize -= tmpStrLen;
 
     /* velocity */
-    if (pInfo->fHorVelocity) {
-        (void)FLOATTOWSTR(pInfo->HorVelocity, wcText,
+    if (pMe->posInfoEx.fHorVelocity) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.HorVelocity, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
     }
@@ -935,8 +939,8 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
     MEMSET(szTmpStr, 0, MAXTEXTLEN);
 
 /*
-    if (pInfo->fVerVelocity) {
-        (void)FLOATTOWSTR(pInfo->VerVelocity, wcText,
+    if (pMe->posInfoEx.fVerVelocity) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.VerVelocity, wcText,
                           MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
         SNPRINTF(pTmp, tmpBufSize, "%s,", szTmpStr)
@@ -950,8 +954,9 @@ PosDetApp_MakeReportStr(PosDetApp *pMe, AEEPositionInfoEx *pInfo)
 */
 
     /* heading */
-    if (pInfo->fHeading) {
-        (void)FLOATTOWSTR(pInfo->Heading, wcText, MAXTEXTLEN * sizeof(AECHAR));
+    if (pMe->posInfoEx.fHeading) {
+        (void)FLOATTOWSTR(pMe->posInfoEx.Heading, wcText,
+                          MAXTEXTLEN * sizeof(AECHAR));
         WSTR_TO_STR(wcText, szTmpStr, MAXTEXTLEN);
     }
     SNPRINTF(pTmp, tmpBufSize, "%s,", szTmpStr);
@@ -1003,17 +1008,8 @@ PosDetApp_LogPos(PosDetApp *pMe)
 {
 #define NEWLINE "\r\n"
 
-    AEEPositionInfoEx posInfo;
     int err = 0;
     uint32 wroteBytes;
-
-    err = PosDetApp_DecodePosInfo(pMe, &posInfo);
-    if (err != SUCCESS) {
-        DBGPRINTF("Decode posInfo failed: err = %d", err);
-        return;
-    }
-
-    PosDetApp_MakeReportStr(pMe, &posInfo);
 
     wroteBytes = IFILE_Write(pMe->pLogFile, pMe->pReportStr,
                              STRLEN(pMe->pReportStr));
@@ -1138,4 +1134,20 @@ PosDetApp_TryWriteToSvr(void *po)
     // (BUFFER_SIZE == pMe->uBytesSent) - all the bytes were successfully
     // written reset the bytes counter for next write operation
     pMe->uBytesSent = 0;
+}
+
+static void
+PosDetApp_ProcessGPSData(PosDetApp *pMe)
+{
+    int err = 0;
+    err = PosDetApp_DecodePosInfo(pMe);
+    if (err != SUCCESS) {
+        DBGPRINTF("Decode posInfo failed: err = %d", err);
+        return;
+    }
+    PosDetApp_MakeReportStr(pMe);
+
+    /* test */
+    PosDetApp_ShowGPSInfo(pMe);
+    PosDetApp_LogPos(pMe);
 }

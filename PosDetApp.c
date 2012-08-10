@@ -240,14 +240,12 @@ PosDetApp_InitAppData(PosDetApp * pMe)
         return FALSE;
     }
 
-#ifdef _DEBUG
     /* test: Create log file. */
     err = PosDetApp_GetLogFile(pMe);
     if (err != SUCCESS) {
         DBGPRINTF("Failed to create file " SPD_LOG_FILE " err = %d", err);
         return FALSE;
     }
-#endif /* _DEBUG */
 
     return TRUE;
 }
@@ -255,12 +253,10 @@ PosDetApp_InitAppData(PosDetApp * pMe)
 void
 PosDetApp_FreeAppData(PosDetApp * pMe)
 {
-#ifdef _DEBUG
     if (pMe->pLogFile) {
         IFILE_Release(pMe->pLogFile);
         pMe->pLogFile = NULL;
     }
-#endif  /* _DEBUG */
 
     CALLBACK_Cancel(&pMe->cbSendTo);
     if (pMe->pISockPort) {
@@ -361,9 +357,7 @@ PosDetApp_Start(PosDetApp *pMe)
         return FALSE;
     }
 
-#ifdef _DEBUG
     (void)IFILE_Write(pMe->pLogFile, "\r\n", STRLEN("\r\n"));
-#endif /* _DEBUG */
 
     // Try connecting to the server.
     PosDetApp_TryConnect(pMe);

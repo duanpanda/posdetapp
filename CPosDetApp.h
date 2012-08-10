@@ -20,9 +20,7 @@
 
 #define REPORT_STR_BUF_SIZE   256
 
-#ifdef _DEBUG
 #define SPD_LOG_FILE                "log.txt"
-#endif
 
 // Only for test
 #define TERMINAL_ID     "13800000000"

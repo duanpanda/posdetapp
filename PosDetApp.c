@@ -238,7 +238,7 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     pMe->bSending = FALSE;
     pMe->bSendSucceeds = FALSE;
     pMe->tcpTryCnt = 0;
-    pMe->tcpConnMaxTry = 5;
+    pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
 
     /* Create ISockPort. */
     if (!PosDetApp_StartTCPClient(pMe)) {
@@ -684,7 +684,7 @@ PosDetApp_CBGetGPSInfo_MultiReq(void *pd)
 
         PosDetApp_ProcessGPSData(pMe);
         /* Initiate next request for GPS fix. */
-        ISHELL_SetTimerEx(pMe->applet.m_pIShell, GPSCBACK_INTERVAL * 1000,
+        ISHELL_SetTimerEx(pMe->applet.m_pIShell, 0,
                           &pMe->cbReqInterval);
     }
     else {
@@ -1097,7 +1097,7 @@ PosDetApp_TryWriteToSvr(void *po)
     // write the data to the server.
     ret = ISockPort_Write(pMe->pISockPort, // ISockPort object
                           pMe->pReportStr + pMe->uBytesSent, // buffer to write
-                          BUFFER_SIZE - pMe->uBytesSent);    // buffer length
+                          SOCK_BUF_SIZE - pMe->uBytesSent);  // buffer length
 
     // the system can't write data at the moment.
     if (AEEPORT_WAIT == ret) {
@@ -1110,13 +1110,18 @@ PosDetApp_TryWriteToSvr(void *po)
     if (AEEPORT_ERROR == ret) {
         ret = ISockPort_GetLastError(pMe->pISockPort);
         DBGPRINTF("SockPort write err = %d", ret);
+        // server closed the connection, close the applet.
+        if (AEE_NET_ECONNRESET == ret) {
+            DBGPRINTF("Server closed the connection!");
+            ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        }
         return;
     }
 
     // connection closed by the other side
     if (AEEPORT_CLOSED == ret) {
-        /* TODO */
         DBGPRINTF("Server closed the connection!");
+        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
         return;
     }
 
@@ -1125,13 +1130,13 @@ PosDetApp_TryWriteToSvr(void *po)
 
     // Not all the bytes were written yet. Call PosDetApp_TryWriteToSvr() again
     // when the write operation may progress.
-    if (pMe->uBytesSent < BUFFER_SIZE) {
+    if (pMe->uBytesSent < SOCK_BUF_SIZE) {
         ISockPort_WriteableEx(pMe->pISockPort, &pMe->cbSendTo,
                               PosDetApp_TryWriteToSvr, pMe);
         return;
     }
 
-    // (BUFFER_SIZE == pMe->uBytesSent) - all the bytes were successfully
+    // (SOCK_BUF_SIZE == pMe->uBytesSent) - all the bytes were successfully
     // written reset the bytes counter for next write operation
     pMe->uBytesSent = 0;
 }

@@ -16,11 +16,11 @@
 #define SPD_CONFIG_SVR_PORT_STRING  "GPS_SERVER_PORT = "
 #define SPD_QOS_DEFAULT       127
 
-#define GPSCBACK_INTERVAL     0    // seconds
-
+#define GPSCBACK_INTERVAL     5    // seconds
 #define REPORT_STR_BUF_SIZE   256
+#define SOCK_BUF_SIZE         REPORT_STR_BUF_SIZE
 
-#define SPD_LOG_FILE                "log.txt"
+#define SPD_LOG_FILE    "log.txt"
 
 // Only for test
 #define TERMINAL_ID     "13800000000"
@@ -31,10 +31,8 @@
 #define POLICEMAN_ID    ""
 
 // define port number and IP address of the server
-#define SERVER_PORT   1212
-#define SERVER_ADDR   "127.0.0.1"
-
-// define message length
-#define BUFFER_SIZE   REPORT_STR_BUF_SIZE
+#define SERVER_PORT     1212
+#define SERVER_ADDR     "127.0.0.1"
+#define CONNECT_MAX_TRY 5
 
 #endif /* #ifndef CPOSDETAPP_H */

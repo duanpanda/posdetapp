@@ -33,8 +33,8 @@
 #define POLICEMAN_ID    ""
 
 // define port number and IP address of the server
-#define SERVER_PORT   0x1212
-#define SERVER_ADDR   "129.46.229.214"
+#define SERVER_PORT   1212
+#define SERVER_ADDR   "127.0.0.1"
 
 // define message length
 #define BUFFER_SIZE   REPORT_STR_BUF_SIZE

@@ -709,7 +709,6 @@ PosDetApp_CBGetGPSInfo_MultiReq(void *pd)
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
                          "error: GetGPSInfo status = %u",
                          pMe->gpsInfo.status);
-        return;
     }
 }
 
@@ -1146,6 +1145,8 @@ PosDetApp_ProcessGPSData(PosDetApp *pMe)
         return;
     }
     PosDetApp_MakeReportStr(pMe);
+
+    PosDetApp_TryWriteToSvr(pMe);
 
     /* test */
     PosDetApp_ShowGPSInfo(pMe);

@@ -99,7 +99,7 @@ typedef struct _PosDetApp {
     AEEGPSInfo   gpsInfo;
     AEEPositionInfoEx posInfoEx;
     CSettings    gpsSettings;
-    char *pReportStr;
+    char         reportStr[REPORT_STR_BUF_SIZE];
 
     int gpsRespCnt;
     int gpsReqCnt; // to track how many GPS requests are sent
@@ -217,14 +217,8 @@ PosDetApp_InitAppData(PosDetApp * pMe)
         return FALSE;
     }
 
-    /* Create report string buffer. */
-    pMe->pReportStr = (char*)MALLOC(REPORT_STR_BUF_SIZE);
-    if (NULL == pMe->pReportStr) {
-        DBGPRINTF("Failed MALLOC %d bytes. err = ENOMEMORY",
-                  REPORT_STR_BUF_SIZE);
-        return FALSE;
-    }
-    MEMSET(pMe->pReportStr, 0, REPORT_STR_BUF_SIZE);
+    /* Clear report string buffer. */
+    MEMSET(pMe->reportStr, 0, REPORT_STR_BUF_SIZE);
 
     /* Initialize the addresses. */
     pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
@@ -258,25 +252,11 @@ PosDetApp_InitAppData(PosDetApp * pMe)
 void
 PosDetApp_FreeAppData(PosDetApp * pMe)
 {
-    if (pMe->pLogFile) {
-        IFILE_Release(pMe->pLogFile);
-        pMe->pLogFile = NULL;
-    }
-
+    IQI_RELEASEIF(pMe->pLogFile);
     CALLBACK_Cancel(&pMe->cbSendTo);
-    if (pMe->pISockPort) {
-        ISockPort_Release(pMe->pISockPort);
-        pMe->pISockPort = NULL;
-    }
-    FREEIF(pMe->pReportStr);
-    if (pMe->pIFileMgr) {
-        IFILEMGR_Release(pMe->pIFileMgr);
-        pMe->pIFileMgr = NULL;
-    }
-    if (pMe->pIPosDet) {
-        IPOSDET_Release(pMe->pIPosDet);
-        pMe->pIPosDet = NULL;
-    }
+    IQI_RELEASEIF(pMe->pISockPort);
+    IQI_RELEASEIF(pMe->pIFileMgr);
+    IQI_RELEASEIF(pMe->pIPosDet);
 }
 
 static boolean
@@ -836,14 +816,14 @@ PosDetApp_DecodePosInfo(PosDetApp *pMe)
                                        &pMe->posInfoEx);
 }
 
-/* After this function, pMe->pReportStr contains the whole piece of GPS data
+/* After this function, pMe->reportStr contains the whole piece of GPS data
  * to be reported to the server.*/
 void
 PosDetApp_MakeReportStr(PosDetApp *pMe)
 {
     /* Fill the string buffer part by part, each part from the temp string. */
 
-    char *pTmp = pMe->pReportStr;         /* points to the temp buffer */
+    char *pTmp = pMe->reportStr;         /* points to the temp buffer */
     int tmpBufSize = REPORT_STR_BUF_SIZE; /* size of temp buffer at pTmp */
 #define MAXTEXTLEN 22
     AECHAR wcText[MAXTEXTLEN];  /* used to hold the float number string */
@@ -852,7 +832,7 @@ PosDetApp_MakeReportStr(PosDetApp *pMe)
     JulianType jd;
 
     /* Clear the report string buffer */
-    MEMSET(pMe->pReportStr, 0, REPORT_STR_BUF_SIZE);
+    MEMSET(pMe->reportStr, 0, REPORT_STR_BUF_SIZE);
 
     /* message_header + terminal_id + time */
     GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
@@ -992,8 +972,8 @@ PosDetApp_LogPos(PosDetApp *pMe)
     int err = 0;
     uint32 wroteBytes;
 
-    wroteBytes = IFILE_Write(pMe->pLogFile, pMe->pReportStr,
-                             STRLEN(pMe->pReportStr));
+    wroteBytes = IFILE_Write(pMe->pLogFile, pMe->reportStr,
+                             STRLEN(pMe->reportStr));
     if (0 == wroteBytes) {
         err = IFILEMGR_GetLastError(pMe->pIFileMgr);
         DBGPRINTF("Write log file failed: err = %d", err);
@@ -1096,7 +1076,7 @@ PosDetApp_TryWriteToSvr(void *po)
 
     // write the data to the server.
     ret = ISockPort_Write(pMe->pISockPort, // ISockPort object
-                          pMe->pReportStr + pMe->uBytesSent, // buffer to write
+                          pMe->reportStr + pMe->uBytesSent, // buffer to write
                           SOCK_BUF_SIZE - pMe->uBytesSent);  // buffer length
 
     // the system can't write data at the moment.

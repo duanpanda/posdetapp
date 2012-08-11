@@ -645,8 +645,10 @@ PosDetApp_CBGetGPSInfo_SingleReq(void *pd)
         PosDetApp_ProcessGPSData(pMe);
     }
     else {
+        DBGPRINTF("GetGPSInfo err = 0x%x",
+                  pMe->gpsInfo.status);
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
-                         "error: GetGPSInfo status = %u",
+                         "GetGPSInfo err=0x%x",
                          pMe->gpsInfo.status);
     }
 }
@@ -668,8 +670,10 @@ PosDetApp_CBGetGPSInfo_MultiReq(void *pd)
                           &pMe->cbReqInterval);
     }
     else {
+        DBGPRINTF("GetGPSInfo err = 0x%x",
+                  pMe->gpsInfo.status);
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
-                         "error: GetGPSInfo status = %u",
+                         "GetGPSInfo err=0x%x",
                          pMe->gpsInfo.status);
     }
 }

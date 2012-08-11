@@ -60,7 +60,7 @@ ModRsc {
     name  ="IDS_STRING_8", 
     id    = 8,
     type  = 1,
-    data  =UTF16_EncString("0.5"),
+    data  =UTF16_EncString("0.7"),
 }
 
 PrivLevel{

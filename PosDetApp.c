@@ -266,6 +266,7 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
     switch (eCode) {
         // Event to inform app to start, so start-up code is here:
     case EVT_APP_START:
+        DBGPRINTF("******** EVT_APP_START");
         if (!PosDetApp_Start(pMe)) {
             PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD,
                              IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
@@ -273,9 +274,24 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
             ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
         }
         return TRUE;
+    case EVT_APP_START_BACKGROUND:
+        DBGPRINTF("******** EVT_APP_START_BACKGROUND");
+        if (!PosDetApp_Start(pMe)) {
+            PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD,
+                IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
+                "Something goes wrong!");
+            ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        }
+        return TRUE;
 
         // Event to inform app to exit, so shut-down code is here:
     case EVT_APP_STOP:
+        //{
+        //    boolean *bToBackground = (boolean*)dwParam;
+        //    *bToBackground = FALSE;
+        //    ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        //}
+        DBGPRINTF("******** EVT_APP_STOP");
         PosDetApp_Stop(pMe);
         return TRUE;
 
@@ -287,6 +303,18 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
     case EVT_APP_RESUME:
         return TRUE;
 
+
+    case EVT_NOTIFY:
+        {
+            AEENotify *pNotify = (AEENotify*)dwParam;
+            if (pNotify->cls == AEECLSID_SHELL
+                && (pNotify->dwMask & NMASK_SHELL_INIT)) {
+
+                ISHELL_StartBackgroundApplet(pMe->applet.m_pIShell,
+                    AEECLSID_CPOSDETAPP, NULL);
+            }
+        }
+        return TRUE;
         // An SMS message has arrived for this app.
         // The Message is in the dwParam above as (char *).
         // sender simply uses this format "//BREW:ClassId:Message",
@@ -1053,7 +1081,7 @@ PosDetApp_TryConnect(void *po)
         PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
                          IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
                          "PosDetApp: SockPort timed out! %d Tries. Close Applet.");
-        DBGPRINTF("PosDetApp: SockPort timed out! Close Applet.",
+        DBGPRINTF("PosDetApp: SockPort timed out! %d tries. Close Applet.",
                   pMe->tcpTryCnt);
         ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
         return;

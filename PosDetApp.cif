@@ -62,3 +62,7 @@ ModRsc {
     type  = 1,
     data  =UTF16_EncString("0.5"),
 }
+
+PrivLevel{
+    AEEPRIVID_PLFile,     AEEPRIVID_PLNetwork,     AEEPRIVID_PLPosLocation
+}

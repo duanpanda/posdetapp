@@ -9,6 +9,8 @@ connect-max-try = 5;
 #
 # 说明：
 #
+# 0. 配置文件的文件名为：config.txt
+#
 # 1. 支持以下选项的配置：
 #    server-ip
 #    server-port

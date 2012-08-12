@@ -91,32 +91,31 @@ typedef struct _UploadSvr {
 } UploadSvr;
 
 typedef struct _PosDetApp {
-    AEEApplet applet;     // First element of this structure must be AEEApplet.
-    AEEDeviceInfo deviceInfo;   // Copy of device info for easy access.
-
-    IPosDet      *pIPosDet;
-    IFileMgr     *pIFileMgr;
-    IFile        *pLogFile;
-    ISockPort    *pISockPort;
-    AEECallback  cbSendTo;
-    AEESockAddrStorage sockAddr;
-    uint32       uBytesSent;
-    AEECallback  cbGetGPSInfo;
-    AEECallback  cbReqInterval;
-    AEEGPSConfig gpsConfig;
-    AEEGPSInfo   gpsInfo;
-    AEEPositionInfoEx posInfoEx;
-    CSettings    gpsSettings;
-    char         reportStr[REPORT_STR_BUF_SIZE];
-    UploadSvr    uploadSvr;
-    int     gpsRespCnt;
-    int     gpsReqCnt; // to track how many GPS requests are sent
-    int     tcpTryCnt;
-    int     tcpConnMaxTry; // max times to try connecting to server
-    boolean bWaitingForResp;
-    boolean bConnected; // is connected to server
-    boolean bSending;
-    boolean bSendSucceeds;
+    AEEApplet           applet;
+    AEEDeviceInfo       deviceInfo;
+    IPosDet            *pIPosDet;
+    IFileMgr           *pIFileMgr;
+    IFile              *pLogFile;
+    ISockPort          *pISockPort;
+    AEECallback         cbSendTo;
+    AEESockAddrStorage  sockAddr;
+    uint32              uBytesSent;
+    AEECallback         cbGetGPSInfo;
+    AEECallback         cbReqInterval;
+    AEEGPSConfig        gpsConfig;
+    AEEGPSInfo          gpsInfo;
+    AEEPositionInfoEx   posInfoEx;
+    CSettings           gpsSettings;
+    char                reportStr[REPORT_STR_BUF_SIZE];
+    UploadSvr           uploadSvr;
+    int                 gpsRespCnt;
+    int                 gpsReqCnt; // to track how many GPS requests are sent
+    int                 tcpTryCnt;
+    int                 tcpConnMaxTry; // max times to try connecting to server
+    boolean             bWaitingForResp;
+    boolean             bConnected; // is connected to server
+    boolean             bSending;
+    boolean             bSendSucceeds;
 } PosDetApp;
 
 /*-----------------------------------------------------------------------------
@@ -1186,9 +1185,9 @@ PosDetApp_ProcessGPSData(PosDetApp *pMe)
 static boolean
 PosDetApp_RequestAFix(PosDetApp *pMe)
 {
-    // Request a fix.
+    /* Request a fix. */
     /* TODO: We can choose MultipleRequests or SingleRequest according to the
-    settings in the configuration file. */
+       settings in the configuration file. */
     if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
         PosDetApp_CnfgTrackNetwork(pMe);
         CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
@@ -1271,7 +1270,7 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         pMe->uploadSvr.port = AEE_htons(temp);
     }
 
-    /* Check for max times of connection try */
+    /* Check for max times of connection try. */
     pszTok = STRSTR(pBuf, SPD_CONFIG_CONNECT_MAX_TRY);
     if (pszTok) {
         pszTok += STRLEN(SPD_CONFIG_CONNECT_MAX_TRY);
@@ -1286,10 +1285,10 @@ static void
 PosDetApp_ApplyDefaultConfig(PosDetApp *pMe)
 {
     /* Initialize the addresses. */
-    pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
-    pMe->sockAddr.inet.port = HTONS(SERVER_PORT); // set port number
+    pMe->sockAddr.wFamily = AEE_AF_INET;          /* IPv4 socket */
+    pMe->sockAddr.inet.port = HTONS(SERVER_PORT); /* set port number */
     INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
-              &(pMe->sockAddr.inet.addr)); // set server IP addr
+              &(pMe->sockAddr.inet.addr)); /* set server IP addr */
 
     /* Initialize the max times of connect try. */
     pMe->tcpConnMaxTry = CONNECT_MAX_TRY;

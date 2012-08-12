@@ -160,6 +160,7 @@ static void PosDetApp_CBGetGPSInfo_MultiReq(void *pd);
 static boolean PosDetApp_SingleRequest(PosDetApp *pMe);
 static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
 static int PosDetApp_ReadUserConfig(PosDetApp *pMe);
+static void PosDetApp_ApplyDefaultConfig(PosDetApp *pMe);
 
 /*-----------------------------------------------------------------------------
   Function Definitions
@@ -229,19 +230,11 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     /* Clear report string buffer. */
     MEMSET(pMe->reportStr, 0, REPORT_STR_BUF_SIZE);
 
-    /* Get user config, if no user config, use the default values. */
+    /* Load default config */
+    PosDetApp_ApplyDefaultConfig(pMe);
+    /* Get user config. */
     err = PosDetApp_ReadUserConfig(pMe);
-    if (NO_USER_CONFIG == err) {
-        /* Initialize the addresses. */
-        pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
-        pMe->sockAddr.inet.port = HTONS(SERVER_PORT); // set port number
-        INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
-                  &(pMe->sockAddr.inet.addr)); // set server IP addr
-
-        /* Initialize the max times of connect try. */
-        pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
-    }
-    else if (SUCCESS != err) {
+    if (SUCCESS != err && NO_USER_CONFIG != err) {
         DBGPRINTF("Error read config file: err=%d");
         return FALSE;
     }
@@ -501,7 +494,7 @@ PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile)
                 nResult = DistToSemi(pszTok);
                 pszSvr = MALLOC(nResult+1);
                 STRLCPY(pszSvr, pszTok, nResult + 1);
-                if (!INET_ATON(pszSvr,
+                if (!INET_PTON(AEE_AF_INET, pszSvr,
                                &pMe->gpsSettings.server.svr.ipsvr.addr)) {
                     FREE(pszSvr);
                     FREEIF(pBuf);
@@ -1106,7 +1099,7 @@ PosDetApp_TryConnect(void *po)
     else if (AEE_SUCCESS != ret) {
         pMe->bConnected = FALSE;
         /* TODO */
-        DBGPRINTF("PosDetApp: SockPort connect err = %d", ret);
+        DBGPRINTF("PosDetApp: SockPort connect err = 0x%x", ret);
         return;
     }
 
@@ -1250,36 +1243,52 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         return ret;
     }
 
-    /* Check for upload server URL. */
+    /* Check for upload server IP. */
     pszTok = STRSTR(pBuf, SPD_CONFIG_UPLOAD_SVR_IP);
     if (pszTok) {
         char *pszSvr = NULL;
         int nResult = 0;
-        pszTok = pszTok + STRLEN(SPD_CONFIG_UPLOAD_SVR_IP);
+        pszTok += STRLEN(SPD_CONFIG_UPLOAD_SVR_IP);
         nResult = DistToSemi(pszTok);
         pszSvr = (char*)MALLOC(nResult + 1);
         (void)STRLCPY(pszSvr, pszTok, nResult + 1);
-        if (!INET_ATON(pszSvr, pMe->uploadSvr.addr)) {
+        if (!INET_PTON(AEE_AF_INET, pszSvr, &pMe->uploadSvr.addr)) {
             FREE(pszSvr);
             FREEIF(pBuf);
             return EFAILED;
         }
         FREE(pszSvr);
     }
-    else {
-        ret = NO_USER_CONFIG;
-    }
+
+    /* Check for upload server port. */
     pszTok = STRSTR(pBuf, SPD_CONFIG_UPLOAD_SVR_PORT);
     if (pszTok) {
         INPort temp;
-        pszTok = pszTok + STRLEN(SPD_CONFIG_UPLOAD_SVR_PORT);
+        pszTok += STRLEN(SPD_CONFIG_UPLOAD_SVR_PORT);
         temp = (INPort)STRTOUL(pszTok, &pszDelimiter, 10);
         pMe->uploadSvr.port = AEE_htons(temp);
     }
-    else {
-        ret = NO_USER_CONFIG;
+
+    /* Check for max times of connection try */
+    pszTok = STRSTR(pBuf, SPD_CONFIG_CONNECT_MAX_TRY);
+    if (pszTok) {
+        pszTok += STRLEN(SPD_CONFIG_CONNECT_MAX_TRY);
+        pMe->tcpConnMaxTry = (int)STRTOUL(pszTok, &pszDelimiter, 10);
     }
 
     IFILE_Release(pCnfgFile);
     return ret;
+}
+
+static void
+PosDetApp_ApplyDefaultConfig(PosDetApp *pMe)
+{
+    /* Initialize the addresses. */
+    pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
+    pMe->sockAddr.inet.port = HTONS(SERVER_PORT); // set port number
+    INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
+              &(pMe->sockAddr.inet.addr)); // set server IP addr
+
+    /* Initialize the max times of connect try. */
+    pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
 }

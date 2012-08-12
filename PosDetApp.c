@@ -17,6 +17,8 @@
 #include "RyanUtils.h"
 #include "PosDetApp_res.h"
 
+#define NO_USER_CONFIG -1
+
 typedef uint8 RequestType;
 
 enum {
@@ -82,6 +84,12 @@ typedef struct _TrackState{
     /**************************/
 } TrackState;
 
+typedef struct _UploadSvr {
+    INAddr addr;
+    INPort port;
+    uint16 reserved;
+} UploadSvr;
+
 typedef struct _PosDetApp {
     AEEApplet applet;     // First element of this structure must be AEEApplet.
     AEEDeviceInfo deviceInfo;   // Copy of device info for easy access.
@@ -100,7 +108,7 @@ typedef struct _PosDetApp {
     AEEPositionInfoEx posInfoEx;
     CSettings    gpsSettings;
     char         reportStr[REPORT_STR_BUF_SIZE];
-
+    UploadSvr    uploadSvr;
     int gpsRespCnt;
     int gpsReqCnt; // to track how many GPS requests are sent
     int tcpTryCnt;
@@ -151,6 +159,7 @@ static void PosDetApp_CBGetGPSInfo_SingleReq(void *pd);
 static void PosDetApp_CBGetGPSInfo_MultiReq(void *pd);
 static boolean PosDetApp_SingleRequest(PosDetApp *pMe);
 static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
+static int PosDetApp_ReadUserConfig(PosDetApp *pMe);
 
 /*-----------------------------------------------------------------------------
   Function Definitions
@@ -220,11 +229,22 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     /* Clear report string buffer. */
     MEMSET(pMe->reportStr, 0, REPORT_STR_BUF_SIZE);
 
-    /* Initialize the addresses. */
-    pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
-    pMe->sockAddr.inet.port = HTONS(SERVER_PORT); // set port number
-    INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
-              &(pMe->sockAddr.inet.addr)); // set server IP addr
+    /* Get user config, if no user config, use the default values. */
+    err = PosDetApp_ReadUserConfig(pMe);
+    if (NO_USER_CONFIG == err) {
+        /* Initialize the addresses. */
+        pMe->sockAddr.wFamily = AEE_AF_INET;          // IPv4 socket
+        pMe->sockAddr.inet.port = HTONS(SERVER_PORT); // set port number
+        INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
+                  &(pMe->sockAddr.inet.addr)); // set server IP addr
+
+        /* Initialize the max times of connect try. */
+        pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
+    }
+    else if (SUCCESS != err) {
+        DBGPRINTF("Error read config file: err=%d");
+        return FALSE;
+    }
 
     pMe->bWaitingForResp = FALSE;
     pMe->bConnected = FALSE;
@@ -232,7 +252,6 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     pMe->bSending = FALSE;
     pMe->bSendSucceeds = FALSE;
     pMe->tcpTryCnt = 0;
-    pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
 
     /* Create ISockPort. */
     if (!PosDetApp_StartTCPClient(pMe)) {
@@ -311,7 +330,7 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
                 && (pNotify->dwMask & NMASK_SHELL_INIT)) {
 
                 ISHELL_StartBackgroundApplet(pMe->applet.m_pIShell,
-                    AEECLSID_CPOSDETAPP, NULL);
+                                             AEECLSID_CPOSDETAPP, NULL);
             }
         }
         return TRUE;
@@ -481,9 +500,7 @@ PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile)
                 pszTok = pszTok + STRLEN(SPD_CONFIG_SVR_IP_STRING);
                 nResult = DistToSemi(pszTok);
                 pszSvr = MALLOC(nResult+1);
-                STRLCPY(pszSvr, pszTok, nResult);
-                *(pszSvr+nResult) = 0;  // Need to manually NULL-terminate the
-                                        // string
+                STRLCPY(pszSvr, pszTok, nResult + 1);
                 if (!INET_ATON(pszSvr,
                                &pMe->gpsSettings.server.svr.ipsvr.addr)) {
                     FREE(pszSvr);
@@ -1188,4 +1205,81 @@ PosDetApp_RequestAFix(PosDetApp *pMe)
     else {
         return TRUE;
     }
+}
+
+/* Return:
+     SUCCESS
+     NO_USER_CONFIG
+     ENOMEMORY
+     other file manipulation error from IFILEMGR_GetLastError().
+*/
+static int
+PosDetApp_ReadUserConfig(PosDetApp *pMe)
+{
+    IFile *pCnfgFile = NULL;
+    int ret = SUCCESS;
+    char *pBuf = NULL;
+    char *pszTok = NULL;
+    char *pszDelimiter = ";";
+
+    AEEFileInfo fileInfo;
+    int nRead = 0;
+
+    if (IFILEMGR_Test(pMe->pIFileMgr, SPD_CONFIG_FILE) != SUCCESS) {
+        return NO_USER_CONFIG;
+    }
+    else {
+        pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
+                                      _OFM_READ);
+        if (NULL == pCnfgFile) {
+            ret = IFILEMGR_GetLastError(pMe->pIFileMgr);
+            return ret;
+        }
+    }
+
+    (void)IFILE_GetInfo(pCnfgFile, &fileInfo);
+    pBuf = (char*)MALLOC(fileInfo.dwSize);
+    if (NULL == pBuf) {
+        return ENOMEMORY;
+    }
+
+    nRead = IFILE_Read(pCnfgFile, (void*)pBuf, fileInfo.dwSize);
+    if ((uint32)nRead != fileInfo.dwSize) {
+        FREEIF(pBuf);
+        ret = IFILEMGR_GetLastError(pMe->pIFileMgr);
+        return ret;
+    }
+
+    /* Check for upload server URL. */
+    pszTok = STRSTR(pBuf, SPD_CONFIG_UPLOAD_SVR_IP);
+    if (pszTok) {
+        char *pszSvr = NULL;
+        int nResult = 0;
+        pszTok = pszTok + STRLEN(SPD_CONFIG_UPLOAD_SVR_IP);
+        nResult = DistToSemi(pszTok);
+        pszSvr = (char*)MALLOC(nResult + 1);
+        (void)STRLCPY(pszSvr, pszTok, nResult + 1);
+        if (!INET_ATON(pszSvr, pMe->uploadSvr.addr)) {
+            FREE(pszSvr);
+            FREEIF(pBuf);
+            return EFAILED;
+        }
+        FREE(pszSvr);
+    }
+    else {
+        ret = NO_USER_CONFIG;
+    }
+    pszTok = STRSTR(pBuf, SPD_CONFIG_UPLOAD_SVR_PORT);
+    if (pszTok) {
+        INPort temp;
+        pszTok = pszTok + STRLEN(SPD_CONFIG_UPLOAD_SVR_PORT);
+        temp = (INPort)STRTOUL(pszTok, &pszDelimiter, 10);
+        pMe->uploadSvr.port = AEE_htons(temp);
+    }
+    else {
+        ret = NO_USER_CONFIG;
+    }
+
+    IFILE_Release(pCnfgFile);
+    return ret;
 }

@@ -15,6 +15,9 @@
 #define SPD_CONFIG_SVR_IP_STRING    "GPS_SERVER_IP = "
 #define SPD_CONFIG_SVR_PORT_STRING  "GPS_SERVER_PORT = "
 #define SPD_QOS_DEFAULT       127
+#define SPD_CONFIG_UPLOAD_SVR_IP   "server-ip = "
+#define SPD_CONFIG_UPLOAD_SVR_PORT "server-port = "
+#define SPD_CONFIG_CONNECT_MAX_TRY  "connect-max-try = "
 
 #define GPSCBACK_INTERVAL     5    // seconds
 #define REPORT_STR_BUF_SIZE   256

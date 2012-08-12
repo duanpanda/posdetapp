@@ -109,10 +109,10 @@ typedef struct _PosDetApp {
     CSettings    gpsSettings;
     char         reportStr[REPORT_STR_BUF_SIZE];
     UploadSvr    uploadSvr;
-    int gpsRespCnt;
-    int gpsReqCnt; // to track how many GPS requests are sent
-    int tcpTryCnt;
-    int tcpConnMaxTry; // max times to try connecting to server
+    int     gpsRespCnt;
+    int     gpsReqCnt; // to track how many GPS requests are sent
+    int     tcpTryCnt;
+    int     tcpConnMaxTry; // max times to try connecting to server
     boolean bWaitingForResp;
     boolean bConnected; // is connected to server
     boolean bSending;
@@ -136,7 +136,7 @@ static void PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
 
 static uint32 PosDetApp_InitGPSSettings(PosDetApp *pMe);
 static uint32 PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile);
-static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
+//static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
 //static uint32 PosDetApp_SaveGPSSettings(PosDetApp *pMe);
 static int PosDetApp_DecodePosInfo(PosDetApp *pMe);
 static void PosDetApp_MakeReportStr(PosDetApp *pMe);
@@ -159,6 +159,8 @@ static void PosDetApp_CBGetGPSInfo_SingleReq(void *pd);
 static void PosDetApp_CBGetGPSInfo_MultiReq(void *pd);
 static boolean PosDetApp_SingleRequest(PosDetApp *pMe);
 static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
+
+/* user config file support */
 static int PosDetApp_ReadUserConfig(PosDetApp *pMe);
 static void PosDetApp_ApplyDefaultConfig(PosDetApp *pMe);
 
@@ -426,7 +428,7 @@ PosDetApp_InitGPSSettings(PosDetApp *pMe)
             pMe->gpsSettings.optim = AEEGPS_OPT_DEFAULT;
             pMe->gpsSettings.qos = SPD_QOS_DEFAULT;
             pMe->gpsSettings.server.svrType = AEEGPS_SERVER_DEFAULT;
-            nResult = PosDetApp_WriteGPSSettings(pMe, pCnfgFile);
+            //nResult = PosDetApp_WriteGPSSettings(pMe, pCnfgFile);
         }
     }
     else {
@@ -517,85 +519,85 @@ PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile)
     return SUCCESS;
 }
 
-uint32
-PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile)
-{
-    char *pszBuf = NULL;
-    int32 nResult = 0;
-
-    pszBuf = MALLOC(1024);
-    if (NULL == pszBuf) {
-        return ENOMEMORY;
-    }
-
-    // Truncate the file, in case it already contains data
-    (void)IFILE_Truncate(pIFile, 0);
-
-    // Write out the optimization setting:
-    SNPRINTF(pszBuf, 1024, SPD_CONFIG_OPT_STRING"%d;\r\n",
-             pMe->gpsSettings.optim);
-    nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
-    if (0 == nResult) {
-        FREE(pszBuf);
-        return EFAILED;
-    }
-
-    // Write out the QoS setting:
-    SNPRINTF(pszBuf, 1024, SPD_CONFIG_QOS_STRING"%d;\r\n",
-             pMe->gpsSettings.qos);
-    nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
-    if (0 == nResult) {
-        FREE(pszBuf);
-        return EFAILED;
-    }
-
-    // Write out the server type setting:
-    SNPRINTF(pszBuf, 1024, SPD_CONFIG_SVR_TYPE_STRING"%d;\r\n",
-             pMe->gpsSettings.server.svrType);
-    nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
-    if (0 == nResult) {
-        FREE(pszBuf);
-        return EFAILED;
-    }
-
-    if (AEEGPS_SERVER_IP == pMe->gpsSettings.server.svrType) {
-        // Write out the IP address setting:
-        INET_NTOA(pMe->gpsSettings.server.svr.ipsvr.addr, pszBuf, 50);
-        nResult = IFILE_Write(pIFile, (const void*)SPD_CONFIG_SVR_IP_STRING,
-                              STRLEN(SPD_CONFIG_SVR_IP_STRING));
-        if (0 == nResult)
-        {
-            FREE(pszBuf);
-            return EFAILED;
-        }
-        nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
-        if (0 == nResult)
-        {
-            FREE(pszBuf);
-            return EFAILED;
-        }
-        nResult = IFILE_Write(pIFile, (const void*)";\r\n", STRLEN(";\r\n"));
-        if (0 == nResult)
-        {
-            FREE(pszBuf);
-            return EFAILED;
-        }
-
-        // Write out the port setting:
-        SNPRINTF(pszBuf, 1024, SPD_CONFIG_SVR_PORT_STRING"%d;\r\n",
-                 AEE_ntohs(pMe->gpsSettings.server.svr.ipsvr.port));
-        nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
-        if (0 == nResult)
-        {
-            FREE(pszBuf);
-            return EFAILED;
-        }
-    }
-
-    FREE(pszBuf);
-
-    return SUCCESS;
-}
+//uint32
+//PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile)
+//{
+//    char *pszBuf = NULL;
+//    int32 nResult = 0;
+//
+//    pszBuf = MALLOC(1024);
+//    if (NULL == pszBuf) {
+//        return ENOMEMORY;
+//    }
+//
+//    // Truncate the file, in case it already contains data
+//    (void)IFILE_Truncate(pIFile, 0);
+//
+//    // Write out the optimization setting:
+//    SNPRINTF(pszBuf, 1024, SPD_CONFIG_OPT_STRING"%d;\r\n",
+//             pMe->gpsSettings.optim);
+//    nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
+//    if (0 == nResult) {
+//        FREE(pszBuf);
+//        return EFAILED;
+//    }
+//
+//    // Write out the QoS setting:
+//    SNPRINTF(pszBuf, 1024, SPD_CONFIG_QOS_STRING"%d;\r\n",
+//             pMe->gpsSettings.qos);
+//    nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
+//    if (0 == nResult) {
+//        FREE(pszBuf);
+//        return EFAILED;
+//    }
+//
+//    // Write out the server type setting:
+//    SNPRINTF(pszBuf, 1024, SPD_CONFIG_SVR_TYPE_STRING"%d;\r\n",
+//             pMe->gpsSettings.server.svrType);
+//    nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
+//    if (0 == nResult) {
+//        FREE(pszBuf);
+//        return EFAILED;
+//    }
+//
+//    if (AEEGPS_SERVER_IP == pMe->gpsSettings.server.svrType) {
+//        // Write out the IP address setting:
+//        INET_NTOA(pMe->gpsSettings.server.svr.ipsvr.addr, pszBuf, 50);
+//        nResult = IFILE_Write(pIFile, (const void*)SPD_CONFIG_SVR_IP_STRING,
+//                              STRLEN(SPD_CONFIG_SVR_IP_STRING));
+//        if (0 == nResult)
+//        {
+//            FREE(pszBuf);
+//            return EFAILED;
+//        }
+//        nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
+//        if (0 == nResult)
+//        {
+//            FREE(pszBuf);
+//            return EFAILED;
+//        }
+//        nResult = IFILE_Write(pIFile, (const void*)";\r\n", STRLEN(";\r\n"));
+//        if (0 == nResult)
+//        {
+//            FREE(pszBuf);
+//            return EFAILED;
+//        }
+//
+//        // Write out the port setting:
+//        SNPRINTF(pszBuf, 1024, SPD_CONFIG_SVR_PORT_STRING"%d;\r\n",
+//                 AEE_ntohs(pMe->gpsSettings.server.svr.ipsvr.port));
+//        nResult = IFILE_Write(pIFile, (const void*)pszBuf, STRLEN(pszBuf));
+//        if (0 == nResult)
+//        {
+//            FREE(pszBuf);
+//            return EFAILED;
+//        }
+//    }
+//
+//    FREE(pszBuf);
+//
+//    return SUCCESS;
+//}
 
 //uint32
 //PosDetApp_SaveGPSSettings(PosDetApp *pMe )

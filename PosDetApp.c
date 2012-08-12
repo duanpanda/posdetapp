@@ -108,7 +108,6 @@ typedef struct _PosDetApp {
     AEEGPSMode          gpsModeCache;
     uint16              nIntervalCache;
     char                reportStr[REPORT_STR_BUF_SIZE];
-    UploadSvr           uploadSvr;
     int                 gpsRespCnt;
     int                 gpsReqCnt; // to track how many GPS requests are sent
     int                 tcpTryCnt;
@@ -1241,7 +1240,7 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         nResult = DistToSemi(pszTok);
         pszSvr = (char*)MALLOC(nResult + 1);
         (void)STRLCPY(pszSvr, pszTok, nResult + 1);
-        if (!INET_PTON(AEE_AF_INET, pszSvr, &pMe->uploadSvr.addr)) {
+        if (!INET_PTON(AEE_AF_INET, pszSvr, &pMe->sockAddr.inet.addr)) {
             FREE(pszSvr);
             FREEIF(pBuf);
             return EFAILED;
@@ -1255,7 +1254,7 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         INPort temp;
         pszTok += STRLEN(SPD_CONFIG_UPLOAD_SVR_PORT);
         temp = (INPort)STRTOUL(pszTok, &pszDelimiter, 10);
-        pMe->uploadSvr.port = AEE_htons(temp);
+        pMe->sockAddr.inet.port = AEE_htons(temp);
     }
 
     /* Check for max times of connection try. */

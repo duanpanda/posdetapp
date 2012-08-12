@@ -4,6 +4,8 @@ GPS_SERVER_TYPE = 0;
 server-ip = 127.0.0.1;
 server-port = 1212;
 connect-max-try = 5;
+gps-interval = 5;
+gps-mode = 4;
 
 # 不支持任何注释，所以请删掉此行及以下所有部分。
 #
@@ -15,6 +17,8 @@ connect-max-try = 5;
 #    server-ip
 #    server-port
 #    connect-max-try
+#    gps-interval
+#    gps-mode
 #    GPS_OPTIMIZATION_MODE
 #    GPS_QOS
 #    GPS_SERVER_TYPE
@@ -23,6 +27,9 @@ connect-max-try = 5;
 #
 #    GPS_*配置项的取值，请参看BREW文档中AEEGPSConfig的说明（详见其中的AEEGPSMode,
 #        AEEGPSOpt和AEEGPSServer）。
+#
+#    gps-mode建议取4或8。
+#        4是AEEGPS_MODE_TRACK_LOCAL, 8是AEEGPS_MODE_TRACL_NETWORK。
 #
 # 2. 以上所有选项，可写可不写，不写的，程序会自动使用默认值。
 #    默认值：以上例子中所写即是。

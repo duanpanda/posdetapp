@@ -102,10 +102,11 @@ typedef struct _PosDetApp {
     uint32              uBytesSent;
     AEECallback         cbGetGPSInfo;
     AEECallback         cbReqInterval;
-    AEEGPSConfig        gpsConfig;
     AEEGPSInfo          gpsInfo;
     AEEPositionInfoEx   posInfoEx;
     CSettings           gpsSettings;
+    AEEGPSMode          gpsModeCache;
+    uint16              nIntervalCache;
     char                reportStr[REPORT_STR_BUF_SIZE];
     UploadSvr           uploadSvr;
     int                 gpsRespCnt;
@@ -150,7 +151,7 @@ static int PosDetApp_GetLogFile(PosDetApp *pMe);
 static void PosDetApp_LogPos(PosDetApp *pMe);
 
 /* test */
-static void PosDetApp_CnfgTrackNetwork(PosDetApp *pMe);
+static void PosDetApp_CnfgTrack(PosDetApp *pMe);
 /* test */
 static void PosDetApp_ShowGPSInfo(PosDetApp *pMe);
 
@@ -366,20 +367,6 @@ PosDetApp_Start(PosDetApp *pMe)
     // Read/Write GPS settings from/to the configuration file.
     ret = (int)PosDetApp_InitGPSSettings(pMe);
     if (ret != SUCCESS) {
-        return FALSE;
-    }
-
-    // Get/Set GPS configuration.
-    ret = IPOSDET_GetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
-    if (ret != SUCCESS) {
-        DBGPRINTF("GetGPSConfig err = %d", ret);
-        return FALSE;
-    }
-
-    pMe->gpsConfig.mode = AEEGPS_MODE_DEFAULT;
-    ret = IPOSDET_SetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
-    if (ret != SUCCESS) {
-        DBGPRINTF("SetGPSConfig err = %d", ret);
         return FALSE;
     }
 
@@ -651,25 +638,26 @@ PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
 }
 
 static void
-PosDetApp_CnfgTrackNetwork(PosDetApp *pMe)
+PosDetApp_CnfgTrack(PosDetApp *pMe)
 {
     int err;
-    MEMSET(&pMe->gpsConfig, 0, sizeof(AEEGPSConfig));
+    AEEGPSConfig gpsConfig;
+    MEMSET(&gpsConfig, 0, sizeof(AEEGPSConfig));
 
     // Retrieve the current configuration.
-    err = IPOSDET_GetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
+    err = IPOSDET_GetGPSConfig(pMe->pIPosDet, &gpsConfig);
     if (err != SUCCESS){
         DBGPRINTF("PosDetApp: Failed to retrieve config. err = %d", err);
     }
 
-    pMe->gpsConfig.mode = AEEGPS_MODE_TRACK_NETWORK;
-    pMe->gpsConfig.nFixes = 0;
-    pMe->gpsConfig.nInterval = GPSCBACK_INTERVAL;
-    pMe->gpsConfig.optim = AEEGPS_OPT_SPEED;
-    pMe->gpsConfig.qos = pMe->gpsSettings.qos;
-    pMe->gpsConfig.server.svrType = AEEGPS_SERVER_DEFAULT;
+    gpsConfig.mode = pMe->gpsModeCache;
+    gpsConfig.nFixes = 0;
+    gpsConfig.nInterval = pMe->nIntervalCache;
+    gpsConfig.optim = AEEGPS_OPT_SPEED;
+    gpsConfig.qos = pMe->gpsSettings.qos;
+    gpsConfig.server.svrType = AEEGPS_SERVER_DEFAULT;
 
-    err = IPOSDET_SetGPSConfig(pMe->pIPosDet, &pMe->gpsConfig);
+    err = IPOSDET_SetGPSConfig(pMe->pIPosDet, &gpsConfig);
 
     if (err != SUCCESS) {
         DBGPRINTF("PosDetApp: Configuration could not be set! err = %d", err);
@@ -1189,7 +1177,7 @@ PosDetApp_RequestAFix(PosDetApp *pMe)
     /* TODO: We can choose MultipleRequests or SingleRequest according to the
        settings in the configuration file. */
     if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
-        PosDetApp_CnfgTrackNetwork(pMe);
+        PosDetApp_CnfgTrack(pMe);
         CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
         return PosDetApp_MultipleRequests(pMe);
     }
@@ -1277,6 +1265,21 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         pMe->tcpConnMaxTry = (int)STRTOUL(pszTok, &pszDelimiter, 10);
     }
 
+    /* Check for get GPS info interval. */
+    pszTok = STRSTR(pBuf, SPD_CONFIG_GET_GPS_INTERVAL);
+    if (pszTok) {
+        pszTok += STRLEN(SPD_CONFIG_GET_GPS_INTERVAL);
+        pMe->nIntervalCache = (uint16)STRTOUL(pszTok, &pszDelimiter, 10);
+    }
+
+    /* Check for GPS mode. */
+    pszTok = STRSTR(pBuf, SPD_CONFIG_GPS_MODE);
+    if (pszTok) {
+        pszTok += STRLEN(SPD_CONFIG_GPS_MODE);
+        pMe->gpsModeCache = (AEEGPSMode)STRTOUL(pszTok, &pszDelimiter, 10);
+    }
+
+    FREE(pBuf);
     IFILE_Release(pCnfgFile);
     return ret;
 }
@@ -1292,4 +1295,10 @@ PosDetApp_ApplyDefaultConfig(PosDetApp *pMe)
 
     /* Initialize the max times of connect try. */
     pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
+
+    /* Initialize GPS mode. */
+    pMe->gpsModeCache = AEEGPS_MODE_TRACK_LOCAL;
+
+    /* Initialize interval of getting GPS info. */
+    pMe->nIntervalCache = GPSCBACK_INTERVAL;
 }

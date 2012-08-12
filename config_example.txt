@@ -25,19 +25,31 @@ gps-mode = 4;
 #    GPS_SERVER_IP
 #    GPS_SERVER_PORT
 #
-#    GPS_*配置项的取值，请参看BREW文档中AEEGPSConfig的说明（详见其中的AEEGPSMode,
+#    GPS_* 配置项的取值，请参看BREW文档中AEEGPSConfig的说明（详见其中的AEEGPSMode,
 #        AEEGPSOpt和AEEGPSServer）。
 #
-#    gps-mode建议取4或8。
+#    gps-mode建议取4或8。其他值也可以取，详见AEEGPSMode的文档说明。
 #        4是AEEGPS_MODE_TRACK_LOCAL, 8是AEEGPS_MODE_TRACL_NETWORK。
+#        以下列出所有允许的取值及它们代表的模式名称（C程序里所用的名称）。
+#    AEEGPS_MODE_ONE_SHOT             1
+#    AEEGPS_MODE_DLOAD_FIRST          2
+#    AEEGPS_MODE_TRACK_LOCAL          4 (默认值)
+#    AEEGPS_MODE_TRACK_NETWORK        8
+#    AEEGPS_MODE_TRACK_OPTIMAL        9
+#    AEEGPS_MODE_TRACK_STANDALONE     10
 #
-# 2. 以上所有选项，可写可不写，不写的，程序会自动使用默认值。
+## 2. 以上所有选项，可写可不写，不写的，程序会自动使用默认值。
 #    默认值：以上例子中所写即是。
+#    各项（行）之间无顺序要求。
+#
+#    server-ip只能写IPv4地址，不支持域名。
+#
+#    其他选项中凡是涉及数值的，只支持十进制值。
 #
 # 3. 格式
-#    项目名称[空格]=[空格]值
+#    项目名称[空格]=[空格]值;
 #
+#    空格是必须的。行末的分号是必须的。
 #    必须完全按照以上所列的选项名称来写，严格区分大小写。
-#    空格是必须的。
 #    一旦写了正确的项目名称，就必须写正确类型的值，否则程序会出错。为了程序的简化，未对配
-#    置文件做较多的容错处理；否则将会非常复杂。
+#        置文件做较多的容错处理；否则将会非常复杂，还会增加可执行文件的大小。

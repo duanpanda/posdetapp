@@ -5,11 +5,11 @@ server-ip = 127.0.0.1;
 server-port = 1212;
 connect-max-try = 5;
 
-# ��֧���κ�ע�ͣ�������ɾ�����м��������в��֡�
+# 不支持任何注释，所以请删掉此行及以下所有部分。
 #
-# ˵����
+# 说明：
 #
-# 1. ֧������ѡ������ã�
+# 1. 支持以下选项的配置：
 #    server-ip
 #    server-port
 #    connect-max-try
@@ -19,16 +19,16 @@ connect-max-try = 5;
 #    GPS_SERVER_IP
 #    GPS_SERVER_PORT
 #
-#    GPS_*�������ȡֵ����ο�BREW�ĵ���AEEGPSConfig��˵����������е�AEEGPSMode,
-#        AEEGPSOpt��AEEGPSServer����
+#    GPS_*配置项的取值，请参看BREW文档中AEEGPSConfig的说明（详见其中的AEEGPSMode,
+#        AEEGPSOpt和AEEGPSServer）。
 #
-# 2. ��������ѡ���д�ɲ�д����д�ģ�������Զ�ʹ��Ĭ��ֵ��
-#    Ĭ��ֵ��������������д���ǡ�
+# 2. 以上所有选项，可写可不写，不写的，程序会自动使用默认值。
+#    默认值：以上例子中所写即是。
 #
-# 3. ��ʽ
-#    ��Ŀ����[�ո�]=[�ո�]ֵ
+# 3. 格式
+#    项目名称[空格]=[空格]值
 #
-#    ������ȫ�����������е�ѡ��������д���ϸ����ִ�Сд��
-#    �ո��Ǳ���ġ�
-#    һ��д����ȷ����Ŀ���ƣ��ͱ���д��ȷ���͵�ֵ���������������Ϊ�˳���ļ򻯣�δ����
-#    ���ļ����϶���ݴ����������򽫻�ǳ����ӡ�
+#    必须完全按照以上所列的选项名称来写，严格区分大小写。
+#    空格是必须的。
+#    一旦写了正确的项目名称，就必须写正确类型的值，否则程序会出错。为了程序的简化，未对配
+#    置文件做较多的容错处理；否则将会非常复杂。

@@ -265,6 +265,7 @@ PosDetApp_InitAppData(PosDetApp * pMe)
 void
 PosDetApp_FreeAppData(PosDetApp * pMe)
 {
+    ISHELL_CancelTimer(pMe->applet.m_pIShell, PosDetApp_TryConnect, pMe);
     IQI_RELEASEIF(pMe->pLogFile);
     CALLBACK_Cancel(&pMe->cbSendTo);
     IQI_RELEASEIF(pMe->pISockPort);
@@ -1062,10 +1063,10 @@ PosDetApp_TryConnect(void *po)
         return;
     }
 
-    // connect to the distant server
-    ret = ISockPort_Connect(pMe->pISockPort,  // ISockPort object
-                            &pMe->sockAddr    // pointer to dest socket
-                                              // address struct
+    /* Connect to the distant server. */
+    ret = ISockPort_Connect(pMe->pISockPort,  /* ISockPort object */
+                            &pMe->sockAddr    /* pointer to dest socket
+                                                 address struct */
         );
     pMe->tcpTryCnt++;
 
@@ -1075,26 +1076,52 @@ PosDetApp_TryConnect(void *po)
         pMe->bConnected = FALSE;
         return;
     }
-    else if (AEE_NET_ETIMEDOUT == ret || AEE_NET_ECONNREFUSED == ret) {
+    else if (AEE_NET_ETIMEDOUT == ret) {
         PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
                          IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
-                         "PosDetApp: SockPort timed out! %d Tries. Close Applet.");
-        DBGPRINTF("PosDetApp: SockPort timed out! %d tries. Close Applet.",
+                         "SockPort timed out! %d Tries. Close Applet.");
+        DBGPRINTF("SockPort timed out! %d tries. Close Applet.",
                   pMe->tcpTryCnt);
         ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
         return;
     }
-    else if (AEE_SUCCESS != ret) {
+    else if (AEE_NET_ECONNREFUSED == ret) {
+        PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
+                         IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
+                         "SockPort conn refused! %d Tries. Close Applet.");
+        DBGPRINTF("SockPort conn refused! %d tries. Close Applet.",
+                  pMe->tcpTryCnt);
+        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        return;
+    }
+    else if (AEE_NET_EISCONN == ret) {
+        DBGPRINTF("Socket is already connected.");
+        pMe->bConnected = TRUE;
+        return;
+    }
+    else if (AEE_NET_EBADF == ret || AEE_NET_EAFNOSUPPORT == ret
+             || AEE_NET_EOPNOTSUPP == ret || AEE_NET_ENOMEM == ret) {
+
+        DBGPRINTF("SockPort connect err = 0x%x. Close applet.", ret);
+        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+    }
+    else if (AEE_NET_EINPROGRESS == ret) {
+        DBGPRINTF("SockPort connect in progress.");
         pMe->bConnected = FALSE;
-        /* TODO */
-        DBGPRINTF("PosDetApp: SockPort connect err = 0x%x", ret);
+        return;
+    }
+    else if (AEE_SUCCESS != ret) {
+        /* For other errors, delay and retry. */
+        pMe->bConnected = FALSE;
+        DBGPRINTF("PosDetApp: SockPort connect err = 0x%x, retry...", ret);
+        ISHELL_SetTimer(pMe->applet.m_pIShell, 3000, PosDetApp_TryConnect, pMe);
         return;
     }
 
-    // (AEE_SUCCESS == ret), the SockPort is connected
+    /* (AEE_SUCCESS == ret), the SockPort is connected */
     pMe->bConnected = TRUE;
 
-    // Start a request for GPS fix.
+    /* Start a request for GPS fix. */
     (void)PosDetApp_RequestAFix(pMe);
 }
 

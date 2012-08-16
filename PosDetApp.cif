@@ -60,9 +60,15 @@ ModRsc {
     name  ="IDS_STRING_8", 
     id    = 8,
     type  = 1,
-    data  =UTF16_EncString("0.8.1"),
+    data  =UTF16_EncString("0.8.2"),
 }
 
 PrivLevel{
     AEEPRIVID_PLFile,     AEEPRIVID_PLNetwork,     AEEPRIVID_PLPosLocation
+}
+
+Notifier {
+    clstype =0x01001000,
+    clsnotify = AEECLSID_CPOSDETAPP,
+    mask =1,
 }

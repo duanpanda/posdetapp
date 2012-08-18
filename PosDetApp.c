@@ -12,83 +12,12 @@
 #include "AEEStdLib.h"
 #include "AEEFile.h"
 #include "AEESockPort.h"
+#include "AEENetwork.h"
+#include "AEENetwork.bid"
 
 #include "CPosDetApp.h"
 #include "RyanUtils.h"
 #include "PosDetApp_res.h"
-
-#define NO_USER_CONFIG -1
-
-typedef uint8 RequestType;
-
-enum {
-    SINGLE_REQUEST,
-    MULTIPLE_REQUESTS
-};
-
-typedef struct _CSettings
-{
-    AEEGPSServer server;
-    AEEGPSOpt    optim;
-    AEEGPSQos    qos;
-    RequestType  reqType;
-    uint8        reserved;
-} CSettings;
-
-typedef enum {
-    TRACK_LOCAL,      /* Uses AEEGPS_TRACK_LOCAL */
-    TRACK_NETWORK,    /* Uses AEEGPS_TRACK_NETOWORK */
-    TRACK_AUTO        /* Attempts using AEEGPS_TRACK_LOCAL if it fails uses
-                         AEEGPS_TRACK_NETWORK */
-} TrackType;
-
-typedef struct {
-    int nErr;         /* SUCCESS or AEEGPS_ERR_* */
-    uint32 dwFixNum;  /* fix number in this tracking session. */
-    double lat;       /* latitude on WGS-84 Geoid */
-    double lon;       /* longitude on WGS-84 Geoid */
-    short  height;    /* Height from WGS-84 Geoid */
-    AEEGPSServer server;
-    AEEGPSQos qos;
-    AEEGPSOpt optim;
-} PositionData;
-
-typedef struct _TrackState{
-    boolean bInNotification; /* When the state machine is notifying the
-                                client */
-    boolean bSetForCancellation; /* Track is meant to be canceled. do so when
-                                    it is safe. */
-    boolean bInProgress;        /* when tracking is in progress. */
-    /**************************/
-
-    /* For TRACK_AUTO */
-    boolean bModeAuto;
-    boolean bModeLocal;
-
-    /* Private members to work with IPosDet */
-    AEECallback cbIntervalTimer;
-    AEECallback cbInfo;
-    AEEGPSInfo theInfo;
-    /**************************/
-
-    /* Clients response members. */
-    AEECallback *pcbResp;
-    PositionData *pResp;
-    /**************************/
-
-    /* Client passed members. */
-    int nPendingFixes;
-    int nTrackInterval;
-    IPosDet *pPos;
-    IShell *pShell;
-    /**************************/
-} TrackState;
-
-typedef struct _UploadSvr {
-    INAddr addr;
-    INPort port;
-    uint16 reserved;
-} UploadSvr;
 
 typedef struct _PosDetApp {
     AEEApplet           applet;
@@ -97,11 +26,15 @@ typedef struct _PosDetApp {
     IFileMgr           *pIFileMgr;
     IFile              *pLogFile;
     ISockPort          *pISockPort;
+    AEECallback         cbTryBind;
+    AEECallback         cbTryConn;
     AEECallback         cbSendTo;
-    AEESockAddrStorage  sockAddr;
+    AEESockAddrStorage  localAddr;
+    AEESockAddrStorage  svrAddr;
     uint32              uBytesSent;
     AEECallback         cbGetGPSInfo;
     AEECallback         cbReqInterval;
+    AEECallback         cbReqTimeout;
     AEEGPSInfo          gpsInfo;
     AEEPositionInfoEx   posInfoEx;
     CSettings           gpsSettings;
@@ -129,10 +62,9 @@ static boolean PosDetApp_HandleEvent(PosDetApp *pMe, AEEEvent eCode,
 static boolean PosDetApp_Start(PosDetApp *pMe);
 static void PosDetApp_Stop(PosDetApp *pMe);
 
-/* test */
-static void PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
-                             uint32 dwFlags, const char *szFormat, ...);
-
+/*
+ * utility functions
+ */
 static uint32 PosDetApp_InitGPSSettings(PosDetApp *pMe);
 static uint32 PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile);
 //static uint32 PosDetApp_WriteGPSSettings(PosDetApp *pMe, IFile *pIFile);
@@ -140,28 +72,31 @@ static uint32 PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile);
 static int PosDetApp_DecodePosInfo(PosDetApp *pMe);
 static void PosDetApp_MakeReportStr(PosDetApp *pMe);
 static boolean PosDetApp_StartTCPClient(PosDetApp *pMe);
-static void PosDetApp_TryConnect(void *po);
-static void PosDetApp_TryWriteToSvr(void *po);
-static void PosDetApp_ProcessGPSData(PosDetApp *pMe);
-static boolean PosDetApp_RequestAFix(PosDetApp *pMe);
-
-/* test */
-static int PosDetApp_GetLogFile(PosDetApp *pMe);
-static void PosDetApp_LogPos(PosDetApp *pMe);
-
-/* test */
-static void PosDetApp_CnfgTrack(PosDetApp *pMe);
-/* test */
-static void PosDetApp_ShowGPSInfo(PosDetApp *pMe);
-
 static void PosDetApp_CBGetGPSInfo_SingleReq(void *pd);
 static void PosDetApp_CBGetGPSInfo_MultiReq(void *pd);
 static boolean PosDetApp_SingleRequest(PosDetApp *pMe);
 static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
-
+static void PosDetApp_TryBind(void *po);
+static void PosDetApp_TryConnect(void *po);
+static void PosDetApp_TryWriteToSvr(void *po);
+static void PosDetApp_OnBadConn(PosDetApp *pMe);
+static void PosDetApp_ProcessGPSData(PosDetApp *pMe);
+static boolean PosDetApp_RequestAFix(PosDetApp *pMe);
+static void PosDetApp_CnfgTrack(PosDetApp *pMe);
+static void PosDetApp_OnGetGpsInfoTimeout(void *po);
 /* user config file support */
 static int PosDetApp_ReadUserConfig(PosDetApp *pMe);
 static void PosDetApp_ApplyDefaultConfig(PosDetApp *pMe);
+
+/*
+ * test
+ */
+static void PosDetApp_Printf(PosDetApp *pMe, int nLine, int nCol, AEEFont fnt,
+                             uint32 dwFlags, const char *szFormat, ...);
+static int PosDetApp_GetLogFile(PosDetApp *pMe);
+static void PosDetApp_LogPos(PosDetApp *pMe);
+static void PosDetApp_ShowGPSInfo(PosDetApp *pMe);
+
 
 /*-----------------------------------------------------------------------------
   Function Definitions
@@ -231,6 +166,10 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     /* Clear report string buffer. */
     MEMSET(pMe->reportStr, 0, REPORT_STR_BUF_SIZE);
 
+    if (PosDetApp_InitGPSSettings(pMe) != SUCCESS) {
+        return FALSE;
+    }
+
     /* Load default config */
     PosDetApp_ApplyDefaultConfig(pMe);
     /* Get user config. */
@@ -258,6 +197,7 @@ PosDetApp_InitAppData(PosDetApp * pMe)
         DBGPRINTF("Failed to create file " SPD_LOG_FILE " err = %d", err);
         return FALSE;
     }
+    (void)IFILE_Write(pMe->pLogFile, "\r\n", STRLEN("\r\n"));
 
     return TRUE;
 }
@@ -265,9 +205,7 @@ PosDetApp_InitAppData(PosDetApp * pMe)
 void
 PosDetApp_FreeAppData(PosDetApp * pMe)
 {
-    ISHELL_CancelTimer(pMe->applet.m_pIShell, PosDetApp_TryConnect, pMe);
     IQI_RELEASEIF(pMe->pLogFile);
-    CALLBACK_Cancel(&pMe->cbSendTo);
     IQI_RELEASEIF(pMe->pISockPort);
     IQI_RELEASEIF(pMe->pIFileMgr);
     IQI_RELEASEIF(pMe->pIPosDet);
@@ -291,20 +229,13 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
     case EVT_APP_START_BACKGROUND:
         DBGPRINTF("******** EVT_APP_START_BACKGROUND");
         if (!PosDetApp_Start(pMe)) {
-            PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD,
-                IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
-                "Something goes wrong!");
+            DBGPRINTF("Something goes wrong!");
             ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
         }
         return TRUE;
 
         // Event to inform app to exit, so shut-down code is here:
     case EVT_APP_STOP:
-        //{
-        //    boolean *bToBackground = (boolean*)dwParam;
-        //    *bToBackground = FALSE;
-        //    ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
-        //}
         DBGPRINTF("******** EVT_APP_STOP");
         PosDetApp_Stop(pMe);
         return TRUE;
@@ -317,7 +248,6 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
     case EVT_APP_RESUME:
         return TRUE;
 
-
     case EVT_NOTIFY:
         {
             AEENotify *pNotify = (AEENotify*)dwParam;
@@ -329,6 +259,7 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
             }
         }
         return TRUE;
+
         // An SMS message has arrived for this app.
         // The Message is in the dwParam above as (char *).
         // sender simply uses this format "//BREW:ClassId:Message",
@@ -361,21 +292,23 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
 static boolean
 PosDetApp_Start(PosDetApp *pMe)
 {
-    int ret;
     IDISPLAY_ClearScreen(pMe->applet.m_pIDisplay);
 
-    // Read/Write GPS settings from/to the configuration file.
-    ret = (int)PosDetApp_InitGPSSettings(pMe);
-    if (ret != SUCCESS) {
-        return FALSE;
+    if (0 != pMe->localAddr.inet.port) {
+        // If there is user defined local port, bind to it.
+        pMe->localAddr.wFamily = AEE_AF_INET;
+        pMe->localAddr.inet.addr = AEE_INADDR_ANY;
+        CALLBACK_Cancel(&pMe->cbTryBind);
+        CALLBACK_Init(&pMe->cbTryBind, PosDetApp_TryBind, pMe);
+        PosDetApp_TryBind(pMe);
     }
-
-    (void)IFILE_Write(pMe->pLogFile, "\r\n", STRLEN("\r\n"));
-
-    // Try connecting to the server.
-    PosDetApp_TryConnect(pMe);
-
-    // Only when connection established does it request a fix.
+    else {
+        CALLBACK_Cancel(&pMe->cbTryConn);
+        CALLBACK_Init(&pMe->cbTryConn, PosDetApp_TryConnect, pMe);
+        CALLBACK_Cancel(&pMe->cbReqTimeout);
+        CALLBACK_Init(&pMe->cbReqTimeout, PosDetApp_OnGetGpsInfoTimeout, pMe);
+        PosDetApp_TryConnect(pMe);
+    }
 
     return TRUE;
 }
@@ -383,48 +316,51 @@ PosDetApp_Start(PosDetApp *pMe)
 static void
 PosDetApp_Stop(PosDetApp *pMe)
 {
-    (void)ISockPort_Close(pMe->pISockPort);
+    CALLBACK_Cancel(&pMe->cbTryConn);
+    CALLBACK_Cancel(&pMe->cbSendTo);
+    CALLBACK_Cancel(&pMe->cbReqTimeout);
     CALLBACK_Cancel(&pMe->cbReqInterval);
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
+    CALLBACK_Cancel(&pMe->cbTryBind);
+    (void)ISockPort_Close(pMe->pISockPort);
 }
 
 static uint32
 PosDetApp_InitGPSSettings(PosDetApp *pMe)
 {
-    IFile *pCnfgFile = NULL;
-    uint32 nResult = 0;
+    //IFile *pCnfgFile = NULL;
+    uint32 nResult = SUCCESS;
 
     pMe->gpsSettings.reqType = MULTIPLE_REQUESTS;
 
-    // If the config file exists, open it and read the settings.  Otherwise, we
-    // need to create a new config file and write default settings in.
-    pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE, _OFM_READ);
-    if (NULL == pCnfgFile) {
-        nResult = EFAILED;
-        DBGPRINTF("Failed to Open File " SPD_CONFIG_FILE);
-        pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
-                                      _OFM_CREATE);
-        if (NULL == pCnfgFile) {
-            int err = IFILEMGR_GetLastError(pMe->pIFileMgr);
-            DBGPRINTF("Failed to Create File " SPD_CONFIG_FILE " err = %d",
-                      err);
-            nResult = EFAILED;
-        }
-        else {
+    // If the config file exists, open it and read the settings.
+    //pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE, _OFM_READ);
+    //if (NULL == pCnfgFile) {
+    //    nResult = EFAILED;
+    //    DBGPRINTF("Failed to Open File " SPD_CONFIG_FILE);
+        //pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
+        //                              _OFM_CREATE);
+        //if (NULL == pCnfgFile) {
+        //    int err = IFILEMGR_GetLastError(pMe->pIFileMgr);
+        //    DBGPRINTF("Failed to Create File " SPD_CONFIG_FILE " err = %d",
+        //              err);
+        //    nResult = EFAILED;
+        //}
+        //else {
             pMe->gpsSettings.optim = AEEGPS_OPT_DEFAULT;
             pMe->gpsSettings.qos = SPD_QOS_DEFAULT;
             pMe->gpsSettings.server.svrType = AEEGPS_SERVER_DEFAULT;
             //nResult = PosDetApp_WriteGPSSettings(pMe, pCnfgFile);
-        }
-    }
-    else {
-        nResult = PosDetApp_ReadGPSSettings(pMe, pCnfgFile);
-    }
+        //}
+    //}
+    //else {
+    //    nResult = PosDetApp_ReadGPSSettings(pMe, pCnfgFile);
+    //}
 
-    // Free the IFileMgr and IFile instances
-    if (pCnfgFile) {
-        (void)IFILE_Release(pCnfgFile);
-    }
+    //// Free the IFileMgr and IFile instances
+    //if (pCnfgFile) {
+    //    (void)IFILE_Release(pCnfgFile);
+    //}
 
     return nResult;
 }
@@ -473,7 +409,7 @@ PosDetApp_ReadGPSSettings(PosDetApp *pMe, IFile *pIFile)
         pszTok = pszTok + STRLEN(SPD_CONFIG_SVR_TYPE_STRING);
         pMe->gpsSettings.server.svrType = STRTOUL(pszTok, &pszDelimiter, 10);
 
-        // If the server type is IP, we need to find the ip address and the
+        // If the server type is IP, we need to find the IP address and the
         // port number
         if (AEEGPS_SERVER_IP == pMe->gpsSettings.server.svrType) {
             pszTok = STRSTR(pBuf, SPD_CONFIG_SVR_IP_STRING);
@@ -687,21 +623,24 @@ PosDetApp_CBGetGPSInfo_MultiReq(void *pd)
     pMe->gpsRespCnt++;
 
     pMe->bWaitingForResp = FALSE;
+    CALLBACK_Cancel(&pMe->cbReqTimeout);
+
     if (pMe->gpsInfo.status == AEEGPS_ERR_NO_ERR
         || (pMe->gpsInfo.status == AEEGPS_ERR_INFO_UNAVAIL
             && pMe->gpsInfo.fValid)) {
 
         PosDetApp_ProcessGPSData(pMe);
+
         /* Initiate next request for GPS fix. */
-        ISHELL_SetTimerEx(pMe->applet.m_pIShell, 0,
-                          &pMe->cbReqInterval);
+        ISHELL_SetTimerEx(pMe->applet.m_pIShell, 0, &pMe->cbReqInterval);
     }
     else {
-        DBGPRINTF("GetGPSInfo err = 0x%x",
-                  pMe->gpsInfo.status);
+        DBGPRINTF("GetGPSInfo err = 0x%x", pMe->gpsInfo.status);
         PosDetApp_Printf(pMe, 1, 2, AEE_FONT_BOLD, IDF_ALIGN_CENTER,
-                         "GetGPSInfo err=0x%x",
-                         pMe->gpsInfo.status);
+                         "GetGPSInfo err=0x%x", pMe->gpsInfo.status);
+        /* Delay and retry get GPS fix. */
+        ISHELL_SetTimerEx(pMe->applet.m_pIShell, GETGPSINFO_ERR_DELAY,
+                          &pMe->cbReqInterval);
     }
 }
 
@@ -709,15 +648,14 @@ static boolean
 PosDetApp_SingleRequest(PosDetApp *pMe)
 {
     CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_SingleReq,
-                  (void*)pMe);
+    CALLBACK_Init(&pMe->cbGetGPSInfo, PosDetApp_CBGetGPSInfo_SingleReq, pMe);
     if (IPOSDET_GetGPSInfo(pMe->pIPosDet,
                            AEEGPS_GETINFO_LOCATION | AEEGPS_GETINFO_ALTITUDE
                            | AEEGPS_GETINFO_VELOCITY,
                            AEEGPS_ACCURACY_LEVEL6,
                            &pMe->gpsInfo, &pMe->cbGetGPSInfo)
         != SUCCESS) {
-        //return failure
+
         return FALSE;
     }
     return TRUE;
@@ -741,7 +679,7 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
                              AEEGPS_ACCURACY_LEVEL1,
                              &pMe->gpsInfo, &pMe->cbGetGPSInfo);
     if (SUCCESS == ret) {
-        // continue
+        /* continue */
         pMe->bWaitingForResp = TRUE;
     }
     else if (EUNSUPPORTED == ret) {
@@ -754,9 +692,14 @@ PosDetApp_MultipleRequests(PosDetApp *pMe)
     }
 
     pMe->gpsReqCnt++;
+    DBGPRINTF("req : %d", pMe->gpsReqCnt);
     PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
                      IDF_ALIGN_LEFT | IDF_RECT_FILL,
                      "req : %d", pMe->gpsReqCnt);
+
+    /* Set timer watching out of time out */
+    ISHELL_SetTimerEx(pMe->applet.m_pIShell, GETGPSINFO_TIMEOUT,
+                      &pMe->cbReqTimeout);
 
     return TRUE;
 }
@@ -823,7 +766,6 @@ PosDetApp_ShowGPSInfo(PosDetApp *pMe)
                          "VerVelocity = %s m/s", szStr);
     }
 }
-
 
 /************************************
  Returns:   int
@@ -1057,41 +999,39 @@ PosDetApp_TryConnect(void *po)
     PosDetApp *pMe = (PosDetApp*)po;
 
     if (pMe->tcpTryCnt >= pMe->tcpConnMaxTry) {
-        DBGPRINTF("PosDetApp: cannot connect to server after %d tries.",
+        DBGPRINTF("Cannot connect to server after %d tries.",
                   pMe->tcpTryCnt);
-        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        DBGPRINTF("Delay longer and retry...");
+        pMe->tcpTryCnt = 0;
+        ISHELL_SetTimerEx(pMe->applet.m_pIShell, CONNECT_LONG_DELAY,
+                          &pMe->cbTryConn);
         return;
     }
 
     /* Connect to the distant server. */
-    ret = ISockPort_Connect(pMe->pISockPort,  /* ISockPort object */
-                            &pMe->sockAddr    /* pointer to dest socket
-                                                 address struct */
-        );
+    ret = ISockPort_Connect(pMe->pISockPort, &pMe->svrAddr);
     pMe->tcpTryCnt++;
 
     if (AEEPORT_WAIT == ret) {
-        ISockPort_WriteableEx(pMe->pISockPort, &pMe->cbSendTo,
-                              PosDetApp_TryConnect, pMe);
+        DBGPRINTF("SockPort wait");
+        ISockPort_Writeable(pMe->pISockPort, &pMe->cbTryConn);
         pMe->bConnected = FALSE;
         return;
     }
     else if (AEE_NET_ETIMEDOUT == ret) {
         PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
                          IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
-                         "SockPort timed out! %d Tries. Close Applet.");
-        DBGPRINTF("SockPort timed out! %d tries. Close Applet.",
-                  pMe->tcpTryCnt);
-        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+                         "SockPort timed out! %d Tries.", pMe->tcpTryCnt);
+        DBGPRINTF("SockPort timed out! %d tries.", pMe->tcpTryCnt);
+        PosDetApp_OnBadConn(pMe);
         return;
     }
     else if (AEE_NET_ECONNREFUSED == ret) {
         PosDetApp_Printf(pMe, 0, 2, AEE_FONT_BOLD,
                          IDF_ALIGN_CENTER | IDF_ALIGN_MIDDLE,
-                         "SockPort conn refused! %d Tries. Close Applet.");
-        DBGPRINTF("SockPort conn refused! %d tries. Close Applet.",
-                  pMe->tcpTryCnt);
-        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+                         "SockPort conn refused! %d tries.", pMe->tcpTryCnt);
+        DBGPRINTF("SockPort conn refused! %d tries.", pMe->tcpTryCnt);
+        PosDetApp_OnBadConn(pMe);
         return;
     }
     else if (AEE_NET_EISCONN == ret) {
@@ -1106,6 +1046,7 @@ PosDetApp_TryConnect(void *po)
         ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
     }
     else if (AEE_NET_EINPROGRESS == ret) {
+        /* TODO */
         DBGPRINTF("SockPort connect in progress.");
         pMe->bConnected = FALSE;
         return;
@@ -1113,13 +1054,15 @@ PosDetApp_TryConnect(void *po)
     else if (AEE_SUCCESS != ret) {
         /* For other errors, delay and retry. */
         pMe->bConnected = FALSE;
-        DBGPRINTF("PosDetApp: SockPort connect err = 0x%x, retry...", ret);
-        ISHELL_SetTimer(pMe->applet.m_pIShell, 3000, PosDetApp_TryConnect, pMe);
+        DBGPRINTF("SockPort connect err=0x%x, delay & retry...", ret);
+        ISHELL_SetTimerEx(pMe->applet.m_pIShell, CONNECT_SHORT_DELAY,
+                          &pMe->cbTryConn);
         return;
     }
 
     /* (AEE_SUCCESS == ret), the SockPort is connected */
     pMe->bConnected = TRUE;
+    pMe->tcpTryCnt = 0;
 
     /* Start a request for GPS fix. */
     (void)PosDetApp_RequestAFix(pMe);
@@ -1147,10 +1090,11 @@ PosDetApp_TryWriteToSvr(void *po)
     if (AEEPORT_ERROR == ret) {
         ret = ISockPort_GetLastError(pMe->pISockPort);
         DBGPRINTF("SockPort write err = %d", ret);
-        // server closed the connection, close the applet.
+        // Connection was reset.
         if (AEE_NET_ECONNRESET == ret) {
-            DBGPRINTF("Server closed the connection!");
-            ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+            DBGPRINTF("Connection reset!");
+            // On broken connection, try re-connect.
+            PosDetApp_OnBadConn(pMe);
         }
         return;
     }
@@ -1158,7 +1102,8 @@ PosDetApp_TryWriteToSvr(void *po)
     // connection closed by the other side
     if (AEEPORT_CLOSED == ret) {
         DBGPRINTF("Server closed the connection!");
-        ISHELL_CloseApplet(pMe->applet.m_pIShell, FALSE);
+        // On broken connection, try re-connect.
+        PosDetApp_OnBadConn(pMe);
         return;
     }
 
@@ -1176,6 +1121,7 @@ PosDetApp_TryWriteToSvr(void *po)
     // (SOCK_BUF_SIZE == pMe->uBytesSent) - all the bytes were successfully
     // written reset the bytes counter for next write operation
     pMe->uBytesSent = 0;
+    pMe->bSendSucceeds = TRUE;
 }
 
 static void
@@ -1200,10 +1146,9 @@ static boolean
 PosDetApp_RequestAFix(PosDetApp *pMe)
 {
     /* Request a fix. */
-    /* TODO: We can choose MultipleRequests or SingleRequest according to the
-       settings in the configuration file. */
     if (pMe->gpsSettings.reqType == MULTIPLE_REQUESTS) {
         PosDetApp_CnfgTrack(pMe);
+        CALLBACK_Cancel(&pMe->cbReqInterval);
         CALLBACK_Init(&pMe->cbReqInterval, PosDetApp_MultipleRequests, pMe);
         return PosDetApp_MultipleRequests(pMe);
     }
@@ -1267,7 +1212,7 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         nResult = DistToSemi(pszTok);
         pszSvr = (char*)MALLOC(nResult + 1);
         (void)STRLCPY(pszSvr, pszTok, nResult + 1);
-        if (!INET_PTON(AEE_AF_INET, pszSvr, &pMe->sockAddr.inet.addr)) {
+        if (!INET_PTON(AEE_AF_INET, pszSvr, &pMe->svrAddr.inet.addr)) {
             FREE(pszSvr);
             FREEIF(pBuf);
             return EFAILED;
@@ -1281,7 +1226,7 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         INPort temp;
         pszTok += STRLEN(SPD_CONFIG_UPLOAD_SVR_PORT);
         temp = (INPort)STRTOUL(pszTok, &pszDelimiter, 10);
-        pMe->sockAddr.inet.port = AEE_htons(temp);
+        pMe->svrAddr.inet.port = AEE_htons(temp);
     }
 
     /* Check for max times of connection try. */
@@ -1305,6 +1250,13 @@ PosDetApp_ReadUserConfig(PosDetApp *pMe)
         pMe->gpsModeCache = (AEEGPSMode)STRTOUL(pszTok, &pszDelimiter, 10);
     }
 
+    /* Check for local port. */
+    pszTok = STRSTR(pBuf, SPD_CONFIG_LOCAL_PORT);
+    if (pszTok) {
+        pszTok += STRLEN(SPD_CONFIG_LOCAL_PORT);
+        pMe->localAddr.inet.port = HTONS((uint16)STRTOUL(pszTok, &pszDelimiter, 10));
+    }
+
     FREE(pBuf);
     IFILE_Release(pCnfgFile);
     return ret;
@@ -1314,10 +1266,10 @@ static void
 PosDetApp_ApplyDefaultConfig(PosDetApp *pMe)
 {
     /* Initialize the addresses. */
-    pMe->sockAddr.wFamily = AEE_AF_INET;          /* IPv4 socket */
-    pMe->sockAddr.inet.port = HTONS(SERVER_PORT); /* set port number */
-    INET_PTON(pMe->sockAddr.wFamily, SERVER_ADDR,
-              &(pMe->sockAddr.inet.addr)); /* set server IP addr */
+    pMe->svrAddr.wFamily = AEE_AF_INET;          /* IPv4 socket */
+    pMe->svrAddr.inet.port = HTONS(SERVER_PORT); /* set port number */
+    INET_PTON(pMe->svrAddr.wFamily, SERVER_ADDR,
+              &(pMe->svrAddr.inet.addr)); /* set server IP addr */
 
     /* Initialize the max times of connect try. */
     pMe->tcpConnMaxTry = CONNECT_MAX_TRY;
@@ -1327,4 +1279,79 @@ PosDetApp_ApplyDefaultConfig(PosDetApp *pMe)
 
     /* Initialize interval of getting GPS info. */
     pMe->nIntervalCache = GPSCBACK_INTERVAL;
+
+    /* local port */
+    pMe->localAddr.inet.port = HTONS(DEFAULT_LOCAL_PORT);
+}
+
+static void
+PosDetApp_TryBind(void *po)
+{
+    PosDetApp *pMe = (PosDetApp*)po;
+    int ret = 0;
+    ret = ISockPort_Bind(pMe->pISockPort, &pMe->localAddr);
+    if (AEEPORT_WAIT == ret) {
+        DBGPRINTF("Try binding to port %u waiting...",
+                  NTOHL(pMe->localAddr.inet.port));
+        ISockPort_Writeable(pMe->pISockPort, &pMe->cbTryBind);
+        return;
+    } else if (AEE_SUCCESS != ret) {
+        DBGPRINTF("Try binding to port %u err = 0x%x",
+                  NTOHL(pMe->localAddr.inet.port), ret);
+        return;
+    }
+    /* AEE_SUCCESS == ret */
+    /* Try connecting to the server. */
+    CALLBACK_Cancel(&pMe->cbTryConn);
+    CALLBACK_Init(&pMe->cbTryConn, PosDetApp_TryConnect, pMe);
+    PosDetApp_TryConnect(pMe);
+}
+
+static void
+PosDetApp_OnBadConn(PosDetApp *pMe)
+{
+    int ret = 0;
+    INetwork *pINetwork = NULL;
+    AEENetStatus netStatus;
+    AEENetStats  netStats;
+
+    DBGPRINTF("PosDetApp_OnBadConn");
+
+    if (ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_Network, (void**)&pINetwork)
+        != SUCCESS) {
+        DBGPRINTF("Error create INetwork instance");
+    }
+
+    if (pINetwork) {
+        INetwork_NetStatus(pINetwork, &netStatus, &netStats);
+        DBGPRINTF("Net status = %d", netStatus);
+    }
+
+    CALLBACK_Cancel(&pMe->cbTryConn);
+    pMe->bConnected = FALSE;
+    ret = ISockPort_Close(pMe->pISockPort);
+    DBGPRINTF("**** SockPort close err = 0x%x", ret);
+    ISockPort_Release(pMe->pISockPort);
+    pMe->pISockPort = NULL;
+    CALLBACK_Cancel(&pMe->cbTryBind);
+    CALLBACK_Cancel(&pMe->cbReqTimeout);
+    CALLBACK_Cancel(&pMe->cbGetGPSInfo);
+    CALLBACK_Cancel(&pMe->cbSendTo);
+    CALLBACK_Cancel(&pMe->cbReqInterval);
+    pMe->bWaitingForResp = FALSE;
+    pMe->bSending = FALSE;
+    ret = PosDetApp_StartTCPClient(pMe);
+    DBGPRINTF("Re-start TCP client, boolean = %d", ret);
+    ISHELL_SetTimerEx(pMe->applet.m_pIShell, CONNECT_LONG_DELAY,
+                      &pMe->cbTryConn);
+
+    IQI_RELEASEIF(pINetwork);
+}
+
+static void
+PosDetApp_OnGetGpsInfoTimeout(void *po)
+{
+    PosDetApp *pMe = (PosDetApp*)po;
+    DBGPRINTF("GetGPSInfo time out. Retry request.");
+    ISHELL_Resume(pMe->applet.m_pIShell, &pMe->cbReqInterval);
 }

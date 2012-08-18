@@ -20,6 +20,7 @@
 #define SPD_CONFIG_CONNECT_MAX_TRY  "connect-max-try = "
 #define SPD_CONFIG_GET_GPS_INTERVAL "gps-interval = "
 #define SPD_CONFIG_GPS_MODE         "gps-mode = "
+#define SPD_CONFIG_LOCAL_PORT       "local-port = "
 
 #define GPSCBACK_INTERVAL     5    // seconds
 #define REPORT_STR_BUF_SIZE   256
@@ -36,8 +37,31 @@
 #define POLICEMAN_ID    ""
 
 // define port number and IP address of the server
-#define SERVER_PORT     1212
-#define SERVER_ADDR     "127.0.0.1"
-#define CONNECT_MAX_TRY 5
+#define SERVER_PORT          1212
+#define SERVER_ADDR          "127.0.0.1"
+#define CONNECT_MAX_TRY      5
+#define CONNECT_SHORT_DELAY  1000 /* milliseconds */
+#define CONNECT_LONG_DELAY   3000 /* milliseconds */
+#define GETGPSINFO_ERR_DELAY 3000 /* milliseconds */
+#define GETGPSINFO_TIMEOUT   20000
+#define DEFAULT_LOCAL_PORT   0
+
+#define NO_USER_CONFIG       -1
+
+typedef uint8 RequestType;
+
+enum {
+    SINGLE_REQUEST,
+    MULTIPLE_REQUESTS
+};
+
+typedef struct _CSettings
+{
+    AEEGPSServer server;
+    AEEGPSOpt    optim;
+    AEEGPSQos    qos;
+    RequestType  reqType;
+    uint8        reserved;
+} CSettings;
 
 #endif /* #ifndef CPOSDETAPP_H */

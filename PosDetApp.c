@@ -362,39 +362,39 @@ PosDetApp_Stop(PosDetApp *pMe)
 static uint32
 PosDetApp_InitGPSSettings(PosDetApp *pMe)
 {
-    //IFile *pCnfgFile = NULL;
+    IFile *pCnfgFile = NULL;
     uint32 nResult = SUCCESS;
 
     pMe->gpsSettings.reqType = MULTIPLE_REQUESTS;
 
     // If the config file exists, open it and read the settings.
-    //pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE, _OFM_READ);
-    //if (NULL == pCnfgFile) {
-    //    nResult = EFAILED;
-    //    DBGPRINTF("Failed to Open File " SPD_CONFIG_FILE);
-        //pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
-        //                              _OFM_CREATE);
-        //if (NULL == pCnfgFile) {
-        //    int err = IFILEMGR_GetLastError(pMe->pIFileMgr);
-        //    DBGPRINTF("Failed to Create File " SPD_CONFIG_FILE " err = %d",
-        //              err);
-        //    nResult = EFAILED;
-        //}
-        //else {
+    pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE, _OFM_READ);
+    if (NULL == pCnfgFile) {
+        nResult = EFAILED;
+        DBGPRINTF("Failed to Open File " SPD_CONFIG_FILE);
+        pCnfgFile = IFILEMGR_OpenFile(pMe->pIFileMgr, SPD_CONFIG_FILE,
+                                      _OFM_CREATE);
+        if (NULL == pCnfgFile) {
+            int err = IFILEMGR_GetLastError(pMe->pIFileMgr);
+            DBGPRINTF("Failed to Create File " SPD_CONFIG_FILE " err = %d",
+                      err);
+            nResult = EFAILED;
+        }
+        else {
             pMe->gpsSettings.optim = AEEGPS_OPT_DEFAULT;
             pMe->gpsSettings.qos = SPD_QOS_DEFAULT;
             pMe->gpsSettings.server.svrType = AEEGPS_SERVER_DEFAULT;
             //nResult = PosDetApp_WriteGPSSettings(pMe, pCnfgFile);
-        //}
-    //}
-    //else {
-    //    nResult = PosDetApp_ReadGPSSettings(pMe, pCnfgFile);
-    //}
+        }
+    }
+    else {
+        nResult = PosDetApp_ReadGPSSettings(pMe, pCnfgFile);
+    }
 
-    //// Free the IFileMgr and IFile instances
-    //if (pCnfgFile) {
-    //    (void)IFILE_Release(pCnfgFile);
-    //}
+    // Free the IFileMgr and IFile instances
+    if (pCnfgFile) {
+        (void)IFILE_Release(pCnfgFile);
+    }
 
     return nResult;
 }
@@ -846,7 +846,7 @@ PosDetApp_MakeReportStr(PosDetApp *pMe)
     if (pMe->pMyIPs
         && INET_NTOP(AEE_AF_INET, &pMe->pMyIPs->addr.v4, szIP,
                      AEE_INET_ADDRSTRLEN)) {
-        SNPRINTF(pTmp, tmpBufSize, "%s:", szIP);
+        SNPRINTF(pTmp, tmpBufSize, "%s", szIP);
 
         /* temp buffer head moves forward */
         tmpStrLen = STRLEN(pTmp);
@@ -856,7 +856,7 @@ PosDetApp_MakeReportStr(PosDetApp *pMe)
 
     /* local port if any */
     if (pMe->localAddr.inet.port != 0) {
-        SNPRINTF(pTmp, tmpBufSize, "%d ", NTOHS(pMe->localAddr.inet.port));
+        SNPRINTF(pTmp, tmpBufSize, ":%d ", NTOHS(pMe->localAddr.inet.port));
 
         /* temp buffer head moves forward */
         tmpStrLen = STRLEN(pTmp);

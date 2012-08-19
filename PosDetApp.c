@@ -26,15 +26,17 @@ typedef struct _PosDetApp {
     IFileMgr           *pIFileMgr;
     IFile              *pLogFile;
     ISockPort          *pISockPort;
+    INetwork           *pINetwork;
     AEECallback         cbTryBind;
     AEECallback         cbTryConn;
     AEECallback         cbSendTo;
-    AEESockAddrStorage  localAddr;
-    AEESockAddrStorage  svrAddr;
-    uint32              uBytesSent;
     AEECallback         cbGetGPSInfo;
     AEECallback         cbReqInterval;
     AEECallback         cbReqTimeout;
+    AEESockAddrStorage  localAddr;
+    AEESockAddrStorage  svrAddr;
+    IPAddr             *pMyIPs;
+    uint32              uBytesSent;
     AEEGPSInfo          gpsInfo;
     AEEPositionInfoEx   posInfoEx;
     CSettings           gpsSettings;
@@ -79,14 +81,18 @@ static boolean PosDetApp_MultipleRequests(PosDetApp *pMe);
 static void PosDetApp_TryBind(void *po);
 static void PosDetApp_TryConnect(void *po);
 static void PosDetApp_TryWriteToSvr(void *po);
-static void PosDetApp_OnBadConn(PosDetApp *pMe);
 static void PosDetApp_ProcessGPSData(PosDetApp *pMe);
 static boolean PosDetApp_RequestAFix(PosDetApp *pMe);
 static void PosDetApp_CnfgTrack(PosDetApp *pMe);
 static void PosDetApp_OnGetGpsInfoTimeout(void *po);
-/* user config file support */
 static int PosDetApp_ReadUserConfig(PosDetApp *pMe);
 static void PosDetApp_ApplyDefaultConfig(PosDetApp *pMe);
+static void PosDetApp_OnBadConn(PosDetApp *pMe);
+static void PosDetApp_OnNetEvtState(void *po, int evt);
+static void PosDetApp_OnNetEvtIP(void *po, int evt);
+static void PosDetApp_ProcessNetEvtState(PosDetApp *pMe);
+static void PosDetApp_ProcessNetEvtIP(PosDetApp *pMe);
+static void PosDetApp_ProcessBadConn(void *po);
 
 /*
  * test
@@ -150,7 +156,7 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     /* Create IPosDet. */
     err = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_POSDET,
         (void**)&pMe->pIPosDet);
-    if (err != SUCCESS) {
+    if (SUCCESS != err) {
         DBGPRINTF("Failed to create IPosDet Interface");
         return FALSE;
     }
@@ -158,7 +164,7 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     /* Create IFileMgr. */
     err = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_FILEMGR,
         (void**)&pMe->pIFileMgr);
-    if (err != SUCCESS) {
+    if (SUCCESS != err) {
         DBGPRINTF("Failed to create IFileMgr Interface");
         return FALSE;
     }
@@ -185,9 +191,18 @@ PosDetApp_InitAppData(PosDetApp * pMe)
     pMe->bSending = FALSE;
     pMe->bSendSucceeds = FALSE;
     pMe->tcpTryCnt = 0;
+    pMe->pMyIPs = NULL;
 
     /* Create ISockPort. */
     if (!PosDetApp_StartTCPClient(pMe)) {
+        return FALSE;
+    }
+
+    /* Create INetwork. */
+    err = ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_Network,
+                                (void**)&pMe->pINetwork);
+    if (SUCCESS != err) {
+        DBGPRINTF("Error create INetwork instance");
         return FALSE;
     }
 
@@ -205,7 +220,9 @@ PosDetApp_InitAppData(PosDetApp * pMe)
 void
 PosDetApp_FreeAppData(PosDetApp * pMe)
 {
+    FREEIF(pMe->pMyIPs);
     IQI_RELEASEIF(pMe->pLogFile);
+    IQI_RELEASEIF(pMe->pINetwork);
     IQI_RELEASEIF(pMe->pISockPort);
     IQI_RELEASEIF(pMe->pIFileMgr);
     IQI_RELEASEIF(pMe->pIPosDet);
@@ -292,7 +309,24 @@ PosDetApp_HandleEvent(PosDetApp* pMe, AEEEvent eCode,
 static boolean
 PosDetApp_Start(PosDetApp *pMe)
 {
+    int err = 0;
     IDISPLAY_ClearScreen(pMe->applet.m_pIDisplay);
+
+    err = INetwork_OnEvent(pMe->pINetwork, NETWORK_EVENT_IP,
+                           PosDetApp_OnNetEvtIP, pMe, TRUE);
+    if (SUCCESS != err) {
+        DBGPRINTF("Register NETWORK_EVENT_IP failed, err=%d", err);
+        return FALSE;
+    }
+    err = INetwork_OnEvent(pMe->pINetwork, NETWORK_EVENT_STATE,
+                           PosDetApp_OnNetEvtState, pMe, TRUE);
+    if (SUCCESS != err) {
+        DBGPRINTF("Register NETWORK_EVENT_STATE failed, err=%d", err);
+        return FALSE;
+    }
+
+    /* Try to get My IPs, may fail, but never mind. */
+    PosDetApp_ProcessNetEvtIP(pMe);
 
     if (0 != pMe->localAddr.inet.port) {
         // If there is user defined local port, bind to it.
@@ -803,9 +837,32 @@ PosDetApp_MakeReportStr(PosDetApp *pMe)
     char szTmpStr[MAXTEXTLEN];  /* snprintf this temp string to tmp buffer */
     int tmpStrLen = 0;          /* string length in bytes of the temp string */
     JulianType jd;
+    char szIP[AEE_INET_ADDRSTRLEN];
 
     /* Clear the report string buffer */
     MEMSET(pMe->reportStr, 0, REPORT_STR_BUF_SIZE);
+
+    /* local IP if any, only show the first IP */
+    if (pMe->pMyIPs
+        && INET_NTOP(AEE_AF_INET, &pMe->pMyIPs->addr.v4, szIP,
+                     AEE_INET_ADDRSTRLEN)) {
+        SNPRINTF(pTmp, tmpBufSize, "%s:", szIP);
+
+        /* temp buffer head moves forward */
+        tmpStrLen = STRLEN(pTmp);
+        pTmp += tmpStrLen;
+        tmpBufSize -= tmpStrLen;
+    }
+
+    /* local port if any */
+    if (pMe->localAddr.inet.port != 0) {
+        SNPRINTF(pTmp, tmpBufSize, "%d ", NTOHS(pMe->localAddr.inet.port));
+
+        /* temp buffer head moves forward */
+        tmpStrLen = STRLEN(pTmp);
+        pTmp += tmpStrLen;
+        tmpBufSize -= tmpStrLen;
+    }
 
     /* message_header + terminal_id + time */
     GETJULIANDATE(pMe->gpsInfo.dwTimeStamp, &jd);
@@ -872,6 +929,7 @@ PosDetApp_MakeReportStr(PosDetApp *pMe)
     MEMSET(wcText, 0, MAXTEXTLEN * sizeof(AECHAR));
     MEMSET(szTmpStr, 0, MAXTEXTLEN);
 
+    /* TODO */
 /*
     if (pMe->posInfoEx.fVerVelocity) {
         (void)FLOATTOWSTR(pMe->posInfoEx.VerVelocity, wcText,
@@ -1291,13 +1349,13 @@ PosDetApp_TryBind(void *po)
     int ret = 0;
     ret = ISockPort_Bind(pMe->pISockPort, &pMe->localAddr);
     if (AEEPORT_WAIT == ret) {
-        DBGPRINTF("Try binding to port %u waiting...",
-                  NTOHL(pMe->localAddr.inet.port));
+        DBGPRINTF("Try binding to port %d waiting...",
+                  NTOHS(pMe->localAddr.inet.port));
         ISockPort_Writeable(pMe->pISockPort, &pMe->cbTryBind);
         return;
     } else if (AEE_SUCCESS != ret) {
-        DBGPRINTF("Try binding to port %u err = 0x%x",
-                  NTOHL(pMe->localAddr.inet.port), ret);
+        DBGPRINTF("Try binding to port %d err = 0x%x",
+                  NTOHS(pMe->localAddr.inet.port), ret);
         return;
     }
     /* AEE_SUCCESS == ret */
@@ -1310,42 +1368,8 @@ PosDetApp_TryBind(void *po)
 static void
 PosDetApp_OnBadConn(PosDetApp *pMe)
 {
-    int ret = 0;
-    INetwork *pINetwork = NULL;
-    AEENetStatus netStatus;
-    AEENetStats  netStats;
-
     DBGPRINTF("PosDetApp_OnBadConn");
-
-    if (ISHELL_CreateInstance(pMe->applet.m_pIShell, AEECLSID_Network, (void**)&pINetwork)
-        != SUCCESS) {
-        DBGPRINTF("Error create INetwork instance");
-    }
-
-    if (pINetwork) {
-        INetwork_NetStatus(pINetwork, &netStatus, &netStats);
-        DBGPRINTF("Net status = %d", netStatus);
-    }
-
-    CALLBACK_Cancel(&pMe->cbTryConn);
-    pMe->bConnected = FALSE;
-    ret = ISockPort_Close(pMe->pISockPort);
-    DBGPRINTF("**** SockPort close err = 0x%x", ret);
-    ISockPort_Release(pMe->pISockPort);
-    pMe->pISockPort = NULL;
-    CALLBACK_Cancel(&pMe->cbTryBind);
-    CALLBACK_Cancel(&pMe->cbReqTimeout);
-    CALLBACK_Cancel(&pMe->cbGetGPSInfo);
-    CALLBACK_Cancel(&pMe->cbSendTo);
-    CALLBACK_Cancel(&pMe->cbReqInterval);
-    pMe->bWaitingForResp = FALSE;
-    pMe->bSending = FALSE;
-    ret = PosDetApp_StartTCPClient(pMe);
-    DBGPRINTF("Re-start TCP client, boolean = %d", ret);
-    ISHELL_SetTimerEx(pMe->applet.m_pIShell, CONNECT_LONG_DELAY,
-                      &pMe->cbTryConn);
-
-    IQI_RELEASEIF(pINetwork);
+    ISHELL_SetTimer(pMe->applet.m_pIShell, 0, PosDetApp_ProcessBadConn, pMe);
 }
 
 static void
@@ -1354,4 +1378,120 @@ PosDetApp_OnGetGpsInfoTimeout(void *po)
     PosDetApp *pMe = (PosDetApp*)po;
     DBGPRINTF("GetGPSInfo time out. Retry request.");
     ISHELL_Resume(pMe->applet.m_pIShell, &pMe->cbReqInterval);
+}
+
+static void
+PosDetApp_OnNetEvtIP(void *po, int evt)
+{
+    DBGPRINTF("#### PosDetApp_OnNetEvtIP");
+    DBGPRINTF("evt = %d", evt);
+    PosDetApp_ProcessNetEvtIP((PosDetApp*)po);
+}
+
+static void
+PosDetApp_OnNetEvtState(void *po, int evt)
+{
+    DBGPRINTF("#### PosDetApp_OnNetEvtState");
+    DBGPRINTF("evt = %d", evt);
+    PosDetApp_ProcessNetEvtState((PosDetApp*)po);
+}
+
+static void
+PosDetApp_ProcessBadConn(void *po)
+{
+    PosDetApp *pMe = (PosDetApp*)po;
+    int ret = 0;
+
+    PosDetApp_ProcessNetEvtState(pMe);
+
+    pMe->bConnected = FALSE;
+    pMe->bWaitingForResp = FALSE;
+    pMe->bSending = FALSE;
+
+    CALLBACK_Cancel(&pMe->cbTryConn);
+    CALLBACK_Cancel(&pMe->cbTryBind);
+    CALLBACK_Cancel(&pMe->cbReqTimeout);
+    CALLBACK_Cancel(&pMe->cbGetGPSInfo);
+    CALLBACK_Cancel(&pMe->cbSendTo);
+    CALLBACK_Cancel(&pMe->cbReqInterval);
+
+    ret = ISockPort_Close(pMe->pISockPort);
+    DBGPRINTF("**** SockPort close err = 0x%x", ret);
+    ISockPort_Release(pMe->pISockPort);
+    pMe->pISockPort = NULL;
+
+    ret = PosDetApp_StartTCPClient(pMe);
+    DBGPRINTF("Re-start TCP client, boolean = %d", ret);
+
+    ISHELL_SetTimerEx(pMe->applet.m_pIShell, CONNECT_LONG_DELAY,
+                      &pMe->cbTryConn);
+}
+
+static void
+PosDetApp_ProcessNetEvtIP(PosDetApp *pMe)
+{
+    int numAddr = 0;
+    int err = 0;
+
+    err = INetwork_GetMyIPAddrs(pMe->pINetwork, NULL, &numAddr);
+    if (AEE_NET_SUCCESS != err) {
+        DBGPRINTF("GetMyIPAddrs numAddr err = 0x%x", err);
+        return;
+    }
+
+    DBGPRINTF("IP num = %d", numAddr);
+    FREEIF(pMe->pMyIPs);
+    pMe->pMyIPs = (IPAddr*)MALLOC(numAddr * sizeof(IPAddr));
+    if (NULL == pMe->pMyIPs) {
+        DBGPRINTF("MALLOC IPAddr[] failed!");
+        return;
+    }
+
+    err = INetwork_GetMyIPAddrs(pMe->pINetwork, pMe->pMyIPs, &numAddr);
+    if (AEE_NET_SUCCESS != err) {
+        DBGPRINTF("GetMyIPAddrs err = 0x%x", err);
+        return;
+    }
+}
+
+static void
+PosDetApp_ProcessNetEvtState(PosDetApp *pMe)
+{
+    AEENetStatus netStatus = 0;
+    AEENetStats  netStats;
+
+    (void)INetwork_NetStatus(pMe->pINetwork, &netStatus, &netStats);
+
+#ifdef _DEBUG
+    switch (netStatus) {
+    case AEE_NET_STATUS_INVALID_STATE:
+        DBGPRINTF("Net status: INVALID");
+        break;
+    case AEE_NET_STATUS_OPENING:
+        DBGPRINTF("Net status: OPENING");
+        break;
+    case AEE_NET_STATUS_OPEN:
+        DBGPRINTF("Net status: OPEN");
+        break;
+    case AEE_NET_STATUS_CLOSING:
+        DBGPRINTF("Net status: CLOSING");
+        break;
+    case AEE_NET_STATUS_CLOSED:
+        DBGPRINTF("Net status: CLOSED");
+        break;
+    case AEE_NET_STATUS_SLEEPING:
+        DBGPRINTF("Net status: SLEEPING");
+        break;
+    case AEE_NET_STATUS_ASLEEP:
+        DBGPRINTF("Net status: ASLEEP");
+        break;
+    case AEE_NET_STATUS_WAKING:
+        DBGPRINTF("Net status: WAKING");
+        break;
+    default:
+        break;
+    }
+#else
+    DBGPRINTF("Net status = %d", netStatus);
+#endif
 }

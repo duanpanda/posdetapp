@@ -6,6 +6,7 @@ server-port = 1212;
 connect-max-try = 5;
 gps-interval = 5;
 gps-mode = 4;
+local-port = 10001;
 
 # 不支持任何注释，所以请删掉此行及以下所有部分。
 #
@@ -19,6 +20,7 @@ gps-mode = 4;
 #    connect-max-try
 #    gps-interval
 #    gps-mode
+#    local-port
 #    GPS_OPTIMIZATION_MODE
 #    GPS_QOS
 #    GPS_SERVER_TYPE

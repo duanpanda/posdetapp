@@ -1,0 +1,1 @@
+This app collects the GPS data on the BREW (Qualcomm's Binary Runtime Environment for Wireless) devices, and transmit the data to a server through a TCP connection.

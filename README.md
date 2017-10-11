@@ -1,4 +1,4 @@
-This is a formal commercial project in 2012. No customer confidential information is revealed here.
+This is a small private commercial project in China in 2012. No customer confidential information is revealed here.
 
 This app collects the GPS data on the BREW (Qualcomm's Binary Runtime Environment for Wireless) devices, and transmits the data to a server through a TCP connection. It runs on Brew Mobile Platform (Brew MP).
 
